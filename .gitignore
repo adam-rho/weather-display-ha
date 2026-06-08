@@ -1,0 +1,6 @@
+.pio/
+.vscode/
+.DS_Store
+
+# Secrets -- never check this in. Use secrets.h.example as the template.
+include/secrets.h
