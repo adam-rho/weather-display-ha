@@ -5,9 +5,9 @@
 //   Bottom row LEDs 24..47  (physically R->L) = precipitation, hour h at LED (47 - h)
 //
 // Overlays:
-//   breathing  -> "now" cells (LED 0 + LED 47) pulse with a sine envelope
+//   breathing  -> sunrise/sunset temp-row cells dip-and-recover once per 6s
 //   wind       -> windy / windy-variant cells flow with Perlin-noise brightness
-//   lightning  -> lightning-rainy cells flash amber every ~5s
+//   lightning  -> storm cells flash yellow over a rain base on a ~12.7s cycle
 //
 // MQTT (retained, published by HA every 15 min):
 //   weather/hourly  {"h":[[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket], ... 24 entries]}
@@ -110,13 +110,13 @@ const CRGB CONDITION_PALETTE[] = {
   CRGB(  0, 255,  12),   // 8  rainy           radar green
   CRGB( 14,   0, 209),   // 9  snowy           deep blue
   CRGB(242,   0, 255),   // 10 snowy-rainy     magenta
-  CRGB(170,   0, 255),   // 11 lightning-rainy violet + lightning anim
+  CRGB(  0, 255,  12),   // 11 lightning-rainy rain green (storm = rain + yellow bolt; no own color)
   CRGB(245,   0,   0),   // 12 exceptional     alert red
 };
 const uint8_t CONDITION_PALETTE_LEN = sizeof(CONDITION_PALETTE) / sizeof(CONDITION_PALETTE[0]);
 
 // --- Overlay colors ---
-const CRGB LIGHTNING_BOLT(224, 242, 24);  // yellow-green flash overlay
+const CRGB LIGHTNING_BOLT(255, 255,  56);  // pure yellow (FFFF38), tuned in the app's Animation Lab
 
 // ==============================================================
 // END PALETTES
@@ -273,14 +273,20 @@ void renderDemo() {
 }
 
 void applyBreathing() {
-  // Pulse the temp-row LEDs at the upcoming sunrise and sunset hours so the
-  // strip telegraphs when day breaks and when night falls. Big swing (near
-  // black -> full) at ~1.6s cycle so the markers are unmistakable against
-  // the static temperature row.
+  // Rest-full, dip-and-recover (shared curve with the app's BreathingParams +
+  // the esp32 firmware -- keep in sync): the sunrise/sunset LEDs sit at their
+  // normal temp color and, once per 6s, do a single 3s gentle dip to ~40%
+  // brightness and back, then hold at full for 3s. minMul 102 = 0.4 * 255.
   if (sunriseIdx < 0 && sunsetIdx < 0) return;
-  float phase = (millis() % 3000) / 3000.0f;
-  float env   = 0.5f * (1.0f - cosf(phase * 2.0f * PI));   // 0..1
-  uint8_t mul = 10 + (uint8_t)(env * 245);                  // floor 10, ceiling 255
+  uint32_t t = millis() % 6000;
+  uint8_t mul;
+  if (t >= 3000) {
+    mul = 255;                                              // hold at full
+  } else {
+    float phase = t / 3000.0f;
+    float env   = 0.5f * (1.0f - cosf(phase * 2.0f * PI));  // 0 -> 1 -> 0
+    mul = 255 - (uint8_t)(env * (255 - 102));               // dip full -> 40% -> full
+  }
   if (sunriseIdx >= 0) leds[tempLed(sunriseIdx)].nscale8(mul);
   if (sunsetIdx  >= 0) leds[tempLed(sunsetIdx)].nscale8(mul);
 }
@@ -336,65 +342,40 @@ void applyWind() {
   }
 }
 
-// Lightning envelope. Each 15s cycle is split into:
-//   0..10000 ms : quiet (LED shows the storm base color)
-//   10000..15000 ms : 5-second flash sequence
-//
-// The flash sequence has five phases:
-//   A  0..1500 ms : rumble at ~40% blend, with noise jitter
-//   B  1500..1700 ms : fast build to 100%
-//   C  1700..2200 ms : hold at 100% (the big strike, 0.5s)
-//   D  2200..3200 ms : three quick down-pulses to 20% and back
-//   E  3200..5000 ms : noisy fade-out from ~70% down to 0%
-#define LIGHTNING_PERIOD_MS    15000
-#define LIGHTNING_DURATION      5000   // length of the active flash window
+// Lightning envelope (shared curve with the app's LightningParams + the esp32
+// firmware -- keep in sync). Each 12702ms cycle: 10s quiet, then a 2702ms flash
+// window split into rumble 533 / build 259 / peak-hold 312 / 4 flicker cycles
+// over 1021 / decay 577.
+#define LIGHTNING_PERIOD_MS    12702
+#define LIGHTNING_DURATION      2702   // length of the active flash window
 #define LIGHTNING_QUIET_MS    (LIGHTNING_PERIOD_MS - LIGHTNING_DURATION)
 
 // Blend amount 0..255 -- 0 = pure base color, 255 = pure LIGHTNING_BOLT.
 uint8_t lightningIntensity(uint32_t t) {
-  // Phase A: rumble in around 40% blend (102/255), noise jitter
-  if (t < 1500) {
-    int base  = 102;
-    int noise = (int)inoise8((uint16_t)(t * 8)) - 128;  // -128..+127
+  if (t < 533) {                                 // rumble: base 127 + noise, clamp [30..150]
+    int base  = 127;
+    int noise = (int)inoise8((uint16_t)(t * 8)) - 128;
     int v     = base + noise / 3;
     if (v < 30)  v = 30;
     if (v > 150) v = 150;
     return (uint8_t)v;
   }
-
-  // Phase B: fast build from ~120 to 255 over 200 ms
-  if (t < 1700) {
-    return 120 + (uint8_t)((t - 1500) * 135 / 200);
+  if (t < 792)  return 120 + (uint8_t)((t - 533) * 135 / 259);   // build 120 -> 255
+  if (t < 1104) return 255;                                      // peak hold (main strike)
+  if (t < 2125) {                                                // flicker: 4 cycles, len 255
+    uint32_t off = t - 1104, cycle = off / 255, in = off - cycle * 255;
+    if (in < 127) return 255 - (uint8_t)(in * (255 - 51) / 127);
+    return 51 + (uint8_t)((in - 127) * (255 - 51) / 128);
   }
-
-  // Phase C: hold at peak for 500 ms (the main strike)
-  if (t < 2200) return 255;
-
-  // Phase D: three quick dip-and-recover pulses 100% -> 20% -> 100%
-  // 1000 ms total, ~333 ms per cycle.
-  if (t < 3200) {
-    uint32_t off   = t - 2200;
-    uint32_t cycle = off / 333;
-    uint32_t in    = off - cycle * 333;
-    // Triangle: 255 -> 51 (20%) at the midpoint, back to 255
-    if (in < 166) {
-      return 255 - (uint8_t)(in * (255 - 51) / 166);
-    } else {
-      return 51 + (uint8_t)((in - 166) * (255 - 51) / 167);
-    }
-  }
-
-  // Phase E: noisy fade out from ~180 down to 0 over 1800 ms
-  if (t < 5000) {
-    int progress = (int)(t - 3200);   // 0..1800
-    int base     = 180 - (progress * 180 / 1800);
+  if (t < 2702) {                                                // decay 180 -> 0 + noise
+    int progress = (int)(t - 2125);
+    int base     = 180 - (progress * 180 / 577);
     int noise    = (int)inoise8((uint16_t)(t * 8)) - 128;
     int v        = base + noise / 4;
     if (v < 0)   v = 0;
     if (v > 255) v = 255;
     return (uint8_t)v;
   }
-
   return 0;
 }
 
@@ -405,7 +386,7 @@ void applyLightning() {
 
   uint32_t phase = millis() % LIGHTNING_PERIOD_MS;
   if (phase < LIGHTNING_QUIET_MS) return;       // still in the 10s quiet stretch
-  uint32_t tFlash = phase - LIGHTNING_QUIET_MS; // 0..5000 ms within the flash
+  uint32_t tFlash = phase - LIGHTNING_QUIET_MS; // 0..2702 ms within the flash
 
   uint8_t v = lightningIntensity(tFlash);
   if (v == 0) return;
