@@ -5,12 +5,15 @@
 //   Bottom row LEDs 24..47  (physically R->L) = precipitation, hour h at LED (47 - h)
 //
 // Overlays:
-//   breathing  -> "now" cells (LED 0 + LED 47) pulse with a sine envelope
+//   breathing  -> sunrise/sunset temp-row cells dip-and-recover once per 6s
 //   wind       -> windy / windy-variant cells flow with Perlin-noise brightness
-//   lightning  -> lightning-rainy cells flash amber every ~5s
+//   lightning  -> storm cells flash yellow over a rain base on a ~12.7s cycle
 //
 // MQTT (retained, published by HA every 15 min):
-//   weather/hourly  {"h":[[temp_bucket, cond_code], ... 24 entries]}
+//   weather/hourly  {"h":[[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket], ... 24 entries]}
+//     - precip_bucket (0..10, optional): scales condition-cell brightness on wet hours.
+//     - wind_bucket   (0..8,  optional): scales the wind-shimmer amplitude.
+//   Older 3-tuple payloads still render (precip/wind default to 0 = off, no crash).
 //
 // Condition codes match the HA NWS integration's twelve possible outputs.
 // HA only classifies. All color logic lives in this file (see PALETTES below).
@@ -87,25 +90,33 @@ enum Condition {
   COND_EXCEPTIONAL      = 12,
 };
 
+// palette v2, synced from the Edgelight product reference (the product esp32
+// forked from this build). This HA build has only two color channels --
+// temperature and conditions -- and intentionally has NO precip color channel
+// and NO wind color channel. Precip modulates the condition cell's
+// BRIGHTNESS only; wind modulates the wind-shimmer AMPLITUDE only.
+//
+// CRGB() args are (R,G,B) even though COLOR_ORDER is GRB (the driver reorders
+// on output; the constructor is always R,G,B).
 const CRGB CONDITION_PALETTE[] = {
-  CRGB(  0,   0,   0),   // 0  unknown        off
-  CRGB(235, 186,  52),   // 1  sunny          warm gold
-  CRGB(32, 10, 73),   // 2  clear-night    deep purple
-  CRGB(174, 184, 132),   // 3  partlycloudy   pale teal
-  CRGB(181, 181, 181),   // 4  cloudy         neutral gray
-  CRGB(235, 186,  52),   // 5  windy          warm gold + wind anim
-  CRGB( 32, 181, 184),   // 6  windy-variant  teal + wind anim
-  CRGB(107, 230, 255),   // 7  fog            icy cyan
-  CRGB(0, 255, 12),   // 8  rainy          radar green
-  CRGB(0, 120, 247),   // 9  snowy          electric blue
-  CRGB( 12, 245, 191),   // 10 snowy-rainy    mint
-  CRGB( 50, 237, 106),   // 11 lightning-rainy radar green + lightning anim
-  CRGB(230, 21, 21),   // 12 exceptional    alert red
+  CRGB(  0,   0,   0),   // 0  unknown         off
+  CRGB(  0, 221, 255),   // 1  sunny           cyan
+  CRGB( 18, 108, 122),   // 2  clear-night     dark teal; night treatment differentiates it
+  CRGB(140, 156,  38),   // 3  partlycloudy    olive
+  CRGB( 69,  75,  12),   // 4  cloudy          dark olive
+  CRGB(255, 190,   0),   // 5  windy           gold, legacy slot + wind anim
+  CRGB(140, 133, 120),   // 6  windy-variant   warm gray, legacy slot
+  CRGB( 71,  94, 118),   // 7  fog             slate blue-gray
+  CRGB(  0, 255,  12),   // 8  rainy           radar green
+  CRGB( 14,   0, 209),   // 9  snowy           deep blue
+  CRGB(242,   0, 255),   // 10 snowy-rainy     magenta
+  CRGB(  0, 255,  12),   // 11 lightning-rainy rain green (storm = rain + yellow bolt; no own color)
+  CRGB(245,   0,   0),   // 12 exceptional     alert red
 };
 const uint8_t CONDITION_PALETTE_LEN = sizeof(CONDITION_PALETTE) / sizeof(CONDITION_PALETTE[0]);
 
 // --- Overlay colors ---
-const CRGB LIGHTNING_BOLT(224, 242, 24);  // yellow-green flash overlay
+const CRGB LIGHTNING_BOLT(255, 255,  56);  // pure yellow (FFFF38), tuned in the app's Animation Lab
 
 // ==============================================================
 // END PALETTES
@@ -133,8 +144,35 @@ CRGB condColor(uint8_t cond) {
 enum Mode { MODE_FORECAST, MODE_DEMO };
 Mode currentMode = MODE_FORECAST;
 
-struct Hour { uint8_t tempBucket; uint8_t cond; uint8_t isNight; };
+struct Hour {
+  uint8_t tempBucket;
+  uint8_t cond;
+  uint8_t isNight;
+  uint8_t precipBucket;   // 0..10, 0 = no data / no precip -> no brightness scaling
+  uint8_t windBucket;     // 0..8,  0 = calm / no data      -> no shimmer amp scaling
+};
 Hour hourly[24];
+
+// Mirrors PaletteStore::precipBrightness() in
+// edgelight-weather-esp32/src/palette_store.cpp. bucket 0 or out-of-range ->
+// 255 (no scaling). Else 85 + 17*bucket: bucket1=102 (~40% floor so light
+// precip stays visible even under the night dim), bucket10=255 (full).
+inline uint8_t precipBrightness(uint8_t bucket) {
+  if (bucket == 0 || bucket > 10) return 255;
+  return (uint8_t)(85 + 17 * bucket);
+}
+
+// Amplitude scale factor d in [0..1] derived from the wind bucket. Mirrors
+// the reference's ampScale = 1.0 + 2.0*d formula in
+// edgelight-weather-esp32/src/render.cpp applyWind, remapped from raw mph to
+// the HA build's bucketed payload. Bucket 3 (~10-14 mph) is the windy
+// threshold and gives d=0 (ampScale=1.0); bucket >=8 (>=50 mph) tops out at
+// d=1.0 (ampScale=3.0).
+inline float windAmpD(uint8_t bucket) {
+  if (bucket < 3)  return 0.0f;
+  if (bucket >= 8) return 1.0f;
+  return (float)(bucket - 3) / 5.0f;
+}
 
 // Global brightness at night. Applied to the whole strip via
 // FastLED.setBrightness() at sunset, restored to BRIGHTNESS at sunrise.
@@ -142,11 +180,16 @@ Hour hourly[24];
 // boundary that contains sunrise/sunset).
 #define NIGHT_BRIGHTNESS 128
 
-// Night wash. After dimming, every night cell gets blended toward a cool
-// moonlight blue so the strip reads as "night sky" instead of "dim gray
-// with one purple LED". Higher NIGHT_TINT_AMT = more uniformly blue.
+// Night treatment (palette v2, synced from the Edgelight product reference).
+// v2 replaced the old heavy blue tint with a hue-preserving dim + a light cool
+// cast, so e.g. cloudy stays gray at night instead of turning fog-blue, and
+// clear-night (now gold) reads as dimmed-gold rather than blue. Per condition
+// cell: dim first hue-preserving with nscale8(115) (~45% brightness), then a
+// light cool tint via nblend toward NIGHT_TINT at strength 50 (~20%). The old
+// form blended toward NIGHT_TINT at ~140 (~55%), which over-blued at night.
 const CRGB NIGHT_TINT(15, 25, 70);
-#define NIGHT_TINT_AMT 140  // 0-255 blend strength (~55%)
+#define NIGHT_DIM      115  // hue-preserving dim, 0-255 (~45% brightness)
+#define NIGHT_TINT_AMT  50  // 0-255 blend strength toward NIGHT_TINT (~20%)
 
 // Sunrise/sunset hour indices, derived from the is_night transitions in the
 // MQTT payload. -1 means "no transition found in the next 24h" (rare edge:
@@ -169,9 +212,18 @@ void renderForecast() {
     // which is where the "white sea of cloudy" problem was.
     leds[tempLed(h)]   = tempColor(hourly[h].tempBucket);
     leds[precipLed(h)] = condColor(hourly[h].cond);
+
+    // Precip-brightness ramp. On wet hours, scale the condition cell's
+    // brightness by precip intensity. bucket 0 / out-of-range returns 255 so
+    // dry hours pass through unchanged. Applied BEFORE the night treatment
+    // so a light-rain-at-night hour stacks both dims (precip floor * night
+    // dim) and reads distinctly dimmer than a heavy-rain-at-night hour.
+    leds[precipLed(h)].nscale8(precipBrightness(hourly[h].precipBucket));
+
     if (hourly[h].isNight) {
-      // Color identity only -- blend toward moonlight blue. Global
-      // brightness is handled in loop() via FastLED.setBrightness().
+      // v2 night treatment: hue-preserving dim first, then a light cool tint.
+      // Global brightness is still handled in loop() via setBrightness().
+      leds[precipLed(h)].nscale8(NIGHT_DIM);
       nblend(leds[precipLed(h)], NIGHT_TINT, NIGHT_TINT_AMT);
     }
   }
@@ -221,14 +273,20 @@ void renderDemo() {
 }
 
 void applyBreathing() {
-  // Pulse the temp-row LEDs at the upcoming sunrise and sunset hours so the
-  // strip telegraphs when day breaks and when night falls. Big swing (near
-  // black -> full) at ~1.6s cycle so the markers are unmistakable against
-  // the static temperature row.
+  // Rest-full, dip-and-recover (shared curve with the app's BreathingParams +
+  // the esp32 firmware -- keep in sync): the sunrise/sunset LEDs sit at their
+  // normal temp color and, once per 6s, do a single 3s gentle dip to ~40%
+  // brightness and back, then hold at full for 3s. minMul 102 = 0.4 * 255.
   if (sunriseIdx < 0 && sunsetIdx < 0) return;
-  float phase = (millis() % 3000) / 3000.0f;
-  float env   = 0.5f * (1.0f - cosf(phase * 2.0f * PI));   // 0..1
-  uint8_t mul = 10 + (uint8_t)(env * 245);                  // floor 10, ceiling 255
+  uint32_t t = millis() % 6000;
+  uint8_t mul;
+  if (t >= 3000) {
+    mul = 255;                                              // hold at full
+  } else {
+    float phase = t / 3000.0f;
+    float env   = 0.5f * (1.0f - cosf(phase * 2.0f * PI));  // 0 -> 1 -> 0
+    mul = 255 - (uint8_t)(env * (255 - 102));               // dip full -> 40% -> full
+  }
   if (sunriseIdx >= 0) leds[tempLed(sunriseIdx)].nscale8(mul);
   if (sunsetIdx  >= 0) leds[tempLed(sunsetIdx)].nscale8(mul);
 }
@@ -243,92 +301,81 @@ void applyWind() {
   // FastLED inoise8 typically returns values clustered in ~70..180. We
   // amplify around the midpoint so the visible brightness swing is large
   // enough to read as motion, then clamp to a 30..255 range so the base
-  // color never fully disappears.
+  // color never fully disappears. Amplitude also scales with wind bucket:
+  // at d=0 (low wind) the base (n-128)*3 stretch is preserved, and at d=1
+  // (>=50 mph) it triples, so 40+ mph hours shimmer visibly harder than
+  // 10-15 mph hours.
   uint16_t tMs = millis() >> 2;  // ~250 noise-steps/sec, ~1s gust period
 
-  auto modulate = [&](uint8_t ledIdx) {
-    int n   = (int)inoise8((uint16_t)ledIdx * 320, tMs);
-    int amp = (n - 128) * 3;     // stretch the noise variance
-    int mul = 140 + amp;
+  auto modulate = [&](uint8_t ledIdx, float d) {
+    int   n       = (int)inoise8((uint16_t)ledIdx * 320, tMs);
+    float ampMul  = 1.0f + 2.0f * d;      // 1.0x at low wind, 3.0x at 40+ mph
+    int   amp     = (int)((n - 128) * 3 * ampMul);
+    int   mul     = 140 + amp;
     if (mul < 30)  mul = 30;
     if (mul > 255) mul = 255;
     leds[ledIdx].nscale8((uint8_t)mul);
   };
 
   if (currentMode == MODE_DEMO) {
+    // Demo slots don't carry a wind bucket -- use d=0.5 (midrange, ~2.0x amp)
+    // matching the reference's legacy isWindy-only demo behavior.
     for (uint8_t i = 0; i < DEMO_COND_LEN; i++) {
       if (!isWindy(DEMO_COND[i])) continue;
-      modulate(demoLedA(i));
-      modulate(demoLedB(i));
+      modulate(demoLedA(i), 0.5f);
+      modulate(demoLedB(i), 0.5f);
     }
     return;
   }
 
   for (uint8_t h = 0; h < 24; h++) {
-    if (!isWindy(hourly[h].cond)) continue;
-    modulate(precipLed(h));
+    uint8_t wb = hourly[h].windBucket;
+    // Windy trigger: condition is windy OR wind bucket >= 3 (~10 mph).
+    // Mirrors the reference's (isWindy || windMph >= 12) translated to
+    // buckets.
+    bool windy = isWindy(hourly[h].cond) || wb >= 3;
+    if (!windy) continue;
+    // If we only have the cond signal (bucket < 3), fall back to d=0.5 to
+    // preserve the pre-v3 fixed-amplitude behavior on legacy 3-tuple payloads.
+    float d = (wb >= 3) ? windAmpD(wb) : 0.5f;
+    modulate(precipLed(h), d);
   }
 }
 
-// Lightning envelope. Each 15s cycle is split into:
-//   0..10000 ms : quiet (LED shows the storm base color)
-//   10000..15000 ms : 5-second flash sequence
-//
-// The flash sequence has five phases:
-//   A  0..1500 ms : rumble at ~40% blend, with noise jitter
-//   B  1500..1700 ms : fast build to 100%
-//   C  1700..2200 ms : hold at 100% (the big strike, 0.5s)
-//   D  2200..3200 ms : three quick down-pulses to 20% and back
-//   E  3200..5000 ms : noisy fade-out from ~70% down to 0%
-#define LIGHTNING_PERIOD_MS    15000
-#define LIGHTNING_DURATION      5000   // length of the active flash window
+// Lightning envelope (shared curve with the app's LightningParams + the esp32
+// firmware -- keep in sync). Each 12702ms cycle: 10s quiet, then a 2702ms flash
+// window split into rumble 533 / build 259 / peak-hold 312 / 4 flicker cycles
+// over 1021 / decay 577.
+#define LIGHTNING_PERIOD_MS    12702
+#define LIGHTNING_DURATION      2702   // length of the active flash window
 #define LIGHTNING_QUIET_MS    (LIGHTNING_PERIOD_MS - LIGHTNING_DURATION)
 
 // Blend amount 0..255 -- 0 = pure base color, 255 = pure LIGHTNING_BOLT.
 uint8_t lightningIntensity(uint32_t t) {
-  // Phase A: rumble in around 40% blend (102/255), noise jitter
-  if (t < 1500) {
-    int base  = 102;
-    int noise = (int)inoise8((uint16_t)(t * 8)) - 128;  // -128..+127
+  if (t < 533) {                                 // rumble: base 127 + noise, clamp [30..150]
+    int base  = 127;
+    int noise = (int)inoise8((uint16_t)(t * 8)) - 128;
     int v     = base + noise / 3;
     if (v < 30)  v = 30;
     if (v > 150) v = 150;
     return (uint8_t)v;
   }
-
-  // Phase B: fast build from ~120 to 255 over 200 ms
-  if (t < 1700) {
-    return 120 + (uint8_t)((t - 1500) * 135 / 200);
+  if (t < 792)  return 120 + (uint8_t)((t - 533) * 135 / 259);   // build 120 -> 255
+  if (t < 1104) return 255;                                      // peak hold (main strike)
+  if (t < 2125) {                                                // flicker: 4 cycles, len 255
+    uint32_t off = t - 1104, cycle = off / 255, in = off - cycle * 255;
+    if (in < 127) return 255 - (uint8_t)(in * (255 - 51) / 127);
+    return 51 + (uint8_t)((in - 127) * (255 - 51) / 128);
   }
-
-  // Phase C: hold at peak for 500 ms (the main strike)
-  if (t < 2200) return 255;
-
-  // Phase D: three quick dip-and-recover pulses 100% -> 20% -> 100%
-  // 1000 ms total, ~333 ms per cycle.
-  if (t < 3200) {
-    uint32_t off   = t - 2200;
-    uint32_t cycle = off / 333;
-    uint32_t in    = off - cycle * 333;
-    // Triangle: 255 -> 51 (20%) at the midpoint, back to 255
-    if (in < 166) {
-      return 255 - (uint8_t)(in * (255 - 51) / 166);
-    } else {
-      return 51 + (uint8_t)((in - 166) * (255 - 51) / 167);
-    }
-  }
-
-  // Phase E: noisy fade out from ~180 down to 0 over 1800 ms
-  if (t < 5000) {
-    int progress = (int)(t - 3200);   // 0..1800
-    int base     = 180 - (progress * 180 / 1800);
+  if (t < 2702) {                                                // decay 180 -> 0 + noise
+    int progress = (int)(t - 2125);
+    int base     = 180 - (progress * 180 / 577);
     int noise    = (int)inoise8((uint16_t)(t * 8)) - 128;
     int v        = base + noise / 4;
     if (v < 0)   v = 0;
     if (v > 255) v = 255;
     return (uint8_t)v;
   }
-
   return 0;
 }
 
@@ -339,7 +386,7 @@ void applyLightning() {
 
   uint32_t phase = millis() % LIGHTNING_PERIOD_MS;
   if (phase < LIGHTNING_QUIET_MS) return;       // still in the 10s quiet stretch
-  uint32_t tFlash = phase - LIGHTNING_QUIET_MS; // 0..5000 ms within the flash
+  uint32_t tFlash = phase - LIGHTNING_QUIET_MS; // 0..2702 ms within the flash
 
   uint8_t v = lightningIntensity(tFlash);
   if (v == 0) return;
@@ -394,13 +441,21 @@ void onMqtt(char* topic, byte* payload, unsigned int len) {
   JsonArray h = doc["h"];
   for (uint8_t i = 0; i < 24 && i < h.size(); i++) {
     JsonArray e = h[i];
-    hourly[i].tempBucket = e[0].as<uint8_t>();
-    hourly[i].cond       = e[1].as<uint8_t>();
+    hourly[i].tempBucket   = e[0].as<uint8_t>();
+    hourly[i].cond         = e[1].as<uint8_t>();
     // is_night is optional (3rd tuple element). Defaults to 0 for backward
     // compatibility with older 2-tuple retained payloads.
-    hourly[i].isNight    = (e.size() >= 3) ? e[2].as<uint8_t>() : 0;
+    hourly[i].isNight      = (e.size() >= 3) ? e[2].as<uint8_t>() : 0;
+    // precip_bucket (0..10) and wind_bucket (0..8) are optional 4th/5th tuple
+    // elements. Default to 0 for older 3-tuple payloads -- 0 means "no data",
+    // which the render path treats as "no brightness scaling / no shimmer
+    // amp scaling", so old payloads render identically to the pre-v3 firmware.
+    hourly[i].precipBucket = (e.size() >= 4) ? e[3].as<uint8_t>() : 0;
+    hourly[i].windBucket   = (e.size() >= 5) ? e[4].as<uint8_t>() : 0;
     if (isLightning(hourly[i].cond)) anyLightning = true;
-    if (isWindy(hourly[i].cond))     anyWindy     = true;
+    // Drive the wind animation when the condition is windy OR the bucketed
+    // wind speed exceeds the ~10 mph threshold. Matches applyWind()'s trigger.
+    if (isWindy(hourly[i].cond) || hourly[i].windBucket >= 3) anyWindy = true;
   }
   // Locate the next sunrise (night -> day) and sunset (day -> night) in the
   // forecast. We compare each hour to the previous one, so h=0 transitions
