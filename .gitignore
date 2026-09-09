@@ -4,3 +4,6 @@
 
 # Secrets -- never check this in. Use secrets.h.example as the template.
 include/secrets.h
+
+# Per-machine PlatformIO overrides (device IP for OTA).
+platformio_local.ini

@@ -1,0 +1,14 @@
+# Add these two blocks to configuration.yaml, then restart HA.
+
+# Enables /config/python_scripts/*.py as callable services.
+python_script:
+
+# Optional: mirrors the retained payload into an HA sensor so you can see what
+# the device is rendering (state = number of hours, attribute h = the tuples).
+mqtt:
+  sensor:
+    - name: "Weather Display Hourly"
+      unique_id: weather_display_hourly
+      state_topic: "weather/hourly"
+      value_template: "{{ value_json.h | length }}"
+      json_attributes_topic: "weather/hourly"

@@ -1,149 +1,140 @@
 # weather-display
 
-ESP32 + WS2812B (48 LEDs) wall-art weather station. Pulls forecast categories
-from Home Assistant via MQTT and renders them with breathing + thunderbolt
-lightning animations. All color logic lives on the device.
+ESP32 + WS2812B (48 LEDs) wall-art weather station, fed by Home Assistant.
 
-## Architecture
+Each LED is one hour of the next 24. The top row is temperature, the bottom
+row is sky conditions. "Now" is at the left end of each row; tomorrow at this
+time is at the right. Storm hours flash yellow, windy hours shimmer, and the
+sunrise and sunset cells breathe.
 
-- **HA** classifies the next 24 hours into category tuples and publishes them
-  to MQTT topic `weather/hourly` (retained) every 15 minutes. Source:
-  `python_script.weather_display_publish`, fired by the HA script
-  `weather_display_publish_forecast` on a 15-minute automation.
-- **ESP32** subscribes to `weather/hourly` plus `weather/display/mode`. The
-  FastLED loop (~60fps) renders the static forecast frame plus animated
-  overlays (breathing on the "now" cells, multi-pulse amber flashes on
-  lightning hours).
+Home Assistant classifies the forecast into small integer buckets and
+publishes them over MQTT every 15 minutes. The ESP32 owns every color and
+animation. Tuning the palette means editing `src/main.cpp` and reflashing;
+nothing on the HA side changes.
 
-HA owns the data shape. The device owns every color. Tuning the palette =
-edit `src/main.cpp` and reflash. No HA roundtrip needed.
+## What you need
 
-## Layout
-
-LED strip is snaked into two rows of 24:
-
-```
-Top row    (LEDs  0..23): physically L -> R  = temperature, hour h at LED h
-Bottom row (LEDs 24..47): physically R -> L  = precipitation, hour h at LED (47 - h)
-```
-
-"Now" = LED 0 (top-left) and LED 47 (bottom-left, after the snake flip). Hour
-0 is the current hour; hour 23 is 23 hours out.
+- Home Assistant with the **Mosquitto broker** add-on (or any MQTT broker HA
+  is connected to)
+- A weather entity that supports hourly forecasts. The built-in met.no entity
+  (`weather.forecast_home`) works out of the box.
+- An ESP32 dev board (`esp32dev` in `platformio.ini`; change `board` for other
+  modules)
+- A 48-LED WS2812B / SK6812 strip, mounted as two rows of 24 (see Layout)
+- 5V supply for the strip, GND common with the ESP32
+- [PlatformIO](https://platformio.org/) to build and flash
 
 ## Setup
 
-1. Copy the secrets template and fill in WiFi SSID/pass and MQTT broker
-   creds:
-   ```bash
-   cp include/secrets.h.example include/secrets.h
-   ```
+### 1. Home Assistant
 
-2. Flash (first time, USB):
-   ```bash
-   pio run -t upload && pio device monitor
-   ```
-   This installs the ArduinoOTA listener. After this, the USB cable can be
-   removed for good (unless you ever brick it and need recovery).
+Everything HA needs is in `ha/`:
 
-3. Flash (subsequent, OTA over WiFi):
-   ```bash
-   pio run -e esp32dev-ota -t upload
-   ```
-   Pushes the firmware to `192.168.2.75:3232` (the ESP32's `weather-display`
-   hostname). If the IP changes, edit `upload_port` in `platformio.ini`.
-   Reserving the IP in your router DHCP table is recommended.
+| File | Where it goes |
+|------|---------------|
+| `ha/python_scripts/weather_display_publish.py` | `/config/python_scripts/` (create the folder if needed) |
+| `ha/scripts.yaml` | Append to your `scripts.yaml`. Change `weather.forecast_home` to your weather entity. |
+| `ha/automations.yaml` | Append to your `automations.yaml`. |
+| `ha/configuration.yaml` | Add `python_script:` to `configuration.yaml`. The `mqtt: sensor:` block is optional. |
 
-   Notes on OTA:
-   - The mDNS form (`weather-display.local`) tends to fail with espota on
-     macOS, so we pin the raw IP instead.
-   - The firmware blanks the LEDs when an OTA starts so FastLED isn't
-     fighting the flash.
-   - OTA is dual-bank: a failed flash leaves the previous firmware intact.
+Restart HA. Then run the script **Weather Display - Publish Forecast** once
+from Settings > Automations & Scenes > Scripts. You should see a retained
+message on the `weather/hourly` topic (MQTT add-on > Configure > Listen to a
+topic).
 
-4. On boot the strip shows a slow blue breath on LED 0 while waiting for the
-   first MQTT message. Once the retained payload arrives (within a second or
-   two of connecting) the full forecast appears.
+### 2. Firmware
+
+```bash
+cp include/secrets.h.example include/secrets.h   # WiFi + MQTT credentials
+pio run -t upload && pio device monitor            # first flash over USB
+```
+
+The first flash installs an ArduinoOTA listener. After that, flash over WiFi:
+
+```bash
+pio run -e esp32dev-ota -t upload
+```
+
+Set the device IP in `platformio_local.ini` (gitignored, see the comment in
+`platformio.ini`). Reserve the IP in your router so it doesn't move. OTA is
+dual-bank, so a failed flash leaves the previous firmware intact, and the
+firmware blanks the LEDs during an OTA so FastLED isn't fighting the flash.
+
+### 3. First boot
+
+The strip shows a slow blue breath on LED 0 until the first MQTT message
+arrives. Once the retained payload lands (a second or two after connecting)
+the full forecast appears.
+
+## Layout
+
+The strip is snaked into two rows of 24:
+
+```
+Top row    (LEDs  0..23): physically L -> R  = temperature, hour h at LED h
+Bottom row (LEDs 24..47): physically R -> L  = conditions,  hour h at LED (47 - h)
+```
+
+Hour 0 is the current hour; hour 23 is 23 hours out. Data is on GPIO 18
+(`DATA_PIN` in `src/main.cpp`).
 
 ## MQTT topics
 
 ### `weather/hourly` (retained, published by HA)
 
 ```json
-{
-  "h": [
-    [temp_bucket, cond_code, intensity],   // hour 0 (now)
-    [temp_bucket, cond_code, intensity],   // hour 1
-    ...                                    // 24 entries total
-    [temp_bucket, cond_code, intensity]    // hour 23
-  ]
-}
+{"h": [[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket], ... 24 entries]}
 ```
 
-- `temp_bucket` (0-7): one slot in the temperature gradient. Enum in
-  `weather_display_publish.py`:
-  `0 unknown, 1 <20F, 2 20-31, 3 32-49, 4 50-64, 5 65-77, 6 78-89, 7 90+`.
-  Rendered via `TEMP_PALETTE` in firmware (deep navy → red).
-- `cond_code` (0-13): NWS condition enum. Atmospheric codes (sunny,
-  cloudy, fog, windy, partlycloudy, clear-night, exceptional) render
-  straight from `CONDITION_PALETTE`. Precip codes (rainy, pouring, snowy,
-  snowy-rainy, hail, lightning, lightning-rainy) route through
-  `precipColor()` to use the intensity ramp instead.
-- `intensity` (0-6): radar-style ramp for precip cells.
-  `0 none, 1 light green (drizzle), 2 dark green (steady light),
-   3 yellow (moderate), 4 orange (heavy), 5 red (torrential),
-   6 pink/purple (severe mix)`. Snow uses a dedicated blue scaled by
-  intensity. Hail / snowy-rainy use a dedicated severe purple.
+| Field | Range | Meaning |
+|-------|-------|---------|
+| `temp_bucket` | 0-7 | `0 unknown, 1 <20°F, 2 20-31, 3 32-49, 4 50-64, 5 65-77, 6 78-89, 7 90+` |
+| `cond_code` | 0-12 | HA condition string mapped by `COND_MAP` in the python script: sunny, clear-night, partlycloudy, cloudy, windy, windy-variant, fog, rainy/pouring, snowy, snowy-rainy, lightning(-rainy), hail/exceptional |
+| `is_night` | 0/1 | 20:00-06:59 local. The firmware dims night cells so cloudy nights don't wash out the strip. |
+| `precip_bucket` | 0-10 | From `precipitation_probability` (10% bands), falling back to amount in mm. Scales brightness on wet hours. |
+| `wind_bucket` | 0-8 | Wind speed normalized to mph, then banded. Scales the shimmer amplitude. |
 
-NWS only exposes `precipitation_probability` (not mm/hr), so the python
-script derives `intensity` from probability + condition severity (e.g.
-`pouring` bumps the bucket by 2, `lightning-rainy` by 1).
+Temperature buckets assume °F. If your HA is metric the temperatures arrive in
+°C; edit `temp_bucket()` in the python script to taste. Wind and precipitation
+units are read from the weather entity and converted automatically.
 
-### `weather/display/mode` (non-JSON, published by HA scripts)
+Older 3-tuple payloads still render (precip and wind default to off).
 
-Plain string payload: `"demo"` or `"forecast"`. Fires from the HA scripts
-`weather_display_demo` and `weather_display_publish_forecast` (the latter
-sets `forecast` mode before publishing the payload). Demo mode renders a
-hand-curated palette walk so you can eyeball all colors side-by-side.
+### `weather/display/mode` (retained, plain string)
+
+`"forecast"` or `"demo"`. Demo mode walks every palette color side by side so
+you can check wiring and color order. The publish script sets `forecast` on
+every refresh, so a device left in demo returns to the forecast within 15
+minutes.
 
 ## Animations
 
-- **Breathing.** Sine envelope on LEDs 0 and 47 (the "now" cells) so the
-  current hour subtly pulses.
-- **Lightning flash.** When any forecast hour has cond_code in
-  {lightning, lightning-rainy}, the flagged precip LEDs hold their radar
-  base color and flash amber every ~5s with a multi-pulse thunderbolt
-  envelope (bright spike, quick dim, second spike, decay).
-
-## Hardware
-
-- ESP32 dev board (esp32dev in `platformio.ini`; adjust `board` for other
-  modules)
-- 48-LED WS2812B / SK6812 strip (snake-mounted in two rows of 24)
-- Data on GPIO 18 (set by `DATA_PIN` in `src/main.cpp`)
-- Power: external 5V to the strip, GND common with the ESP32
+- **Sunrise / sunset breathe.** The temperature cells at the day/night
+  transitions dip and recover once every 6 seconds.
+- **Wind shimmer.** Windy hours flow with Perlin-noise brightness; amplitude
+  scales with `wind_bucket`.
+- **Lightning.** Storm hours render as rain with a yellow bolt blended on top
+  on a ~12.7 second cycle (rumble, build, peak, flicker, decay).
 
 ## Firmware structure
 
 All in `src/main.cpp`:
 
-- `TEMP_PALETTE`, `CONDITION_PALETTE`, `PRECIP_RAMP`, `SNOW_COLOR`,
-  `SEVERE_COLOR`, `LIGHTNING_BOLT`: every color the device can show.
-- `precipColor(cond, intensity)`: routes precip codes through the ramp,
-  atmospheric codes through the palette.
-- `renderForecast()` / `renderDemo()`: build the static frame.
-- `applyBreathing()` / `applyLightning()`: per-frame overlays.
-- `onMqtt()`: parses both topics, handles mode switch.
+- `TEMP_PALETTE`, `CONDITION_PALETTE`, `LIGHTNING_BOLT`: every color the device
+  can show
+- `renderForecast()` / `renderDemo()`: build the static frame
+- `applyBreathing()` / `applyWind()` / `applyLightning()`: per-frame overlays
+- `onMqtt()`: parses both topics and handles the mode switch
 
-## HA pieces (lives under `/config/` on the HA host)
+Keep `COND_MAP` in `ha/python_scripts/weather_display_publish.py` in step with
+the condition enum in `src/main.cpp`. A new condition needs both.
 
-- `python_scripts/weather_display_publish.py`: classifies forecast into the
-  category tuples and publishes to `weather/hourly`.
-- `scripts.yaml`:
-  - `weather_display_publish_forecast`: pulls NWS hourly forecast, sets
-    mode to `forecast`, calls the python_script.
-  - `weather_display_demo`: sets mode to `demo`.
-- An automation runs `weather_display_publish_forecast` every 15 minutes.
+## Related
 
-Keep the COND_MAP in `weather_display_publish.py` in lockstep with the
-`Condition` enum in `src/main.cpp`. If you add a new condition, both files
-need the new code.
+The same idea, ported to a phone: [Edgelight Weather](https://play.google.com/store/apps/details?id=com.adamrho.edgelight)
+is an Android live wallpaper that renders the 24-hour forecast as a glow
+along the screen edges.
+
+## License
+
+MIT. See `LICENSE`.

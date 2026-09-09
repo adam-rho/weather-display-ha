@@ -1,0 +1,14 @@
+# Add to automations.yaml. Publishes at HA startup and every 15 minutes.
+
+- id: weather_display_update
+  alias: Weather Display - Publish Forecast
+  description: Publish forecast to MQTT at startup and every 15 minutes for the ESP32 display
+  triggers:
+    - trigger: homeassistant
+      event: start
+    - trigger: time_pattern
+      minutes: /15
+  conditions: []
+  actions:
+    - action: script.weather_display_update
+  mode: single

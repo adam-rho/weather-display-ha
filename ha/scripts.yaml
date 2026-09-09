@@ -1,0 +1,27 @@
+# Add these to your scripts.yaml (or paste into Settings > Automations & Scenes
+# > Scripts > YAML mode). Replace weather.forecast_home with your weather entity.
+# It must support hourly forecasts (the built-in met.no entity does).
+
+weather_display_update:
+  alias: Weather Display - Publish Forecast
+  description: Publish the next 24 forecast hours to MQTT (weather/hourly) for the ESP32 display
+  mode: single
+  sequence:
+    - action: weather.get_forecasts
+      data:
+        entity_id: weather.forecast_home
+        type: hourly
+      response_variable: forecast_response
+    - action: python_script.weather_display_publish
+      data:
+        forecast_data: "{{ forecast_response }}"
+
+weather_display_demo:
+  alias: Weather Display - Demo Mode
+  description: Switch the display into palette-demo mode (every color side by side)
+  mode: single
+  sequence:
+    - action: mqtt.publish
+      data:
+        topic: weather/display/mode
+        payload: demo
