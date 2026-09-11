@@ -63,6 +63,12 @@ class PublisherTest(unittest.TestCase):
         _, calls = publish([])
         self.assertEqual([], calls)
 
+    def test_forecast_metadata_keeps_hour_indices(self):
+        _, calls = publish([dict(temperature=50, condition='sunny', datetime='2026-09-11T12:00:00Z')])
+        payload = json.loads(calls[-1].args[2]['payload'])
+        self.assertEqual(['2026-09-11T12:00:00Z']*24, payload['times'])
+        self.assertIn('generated_at', payload)
+
 
 class FirmwareColorsTest(unittest.TestCase):
     @classmethod
@@ -80,6 +86,14 @@ class FirmwareColorsTest(unittest.TestCase):
 
     def test_temperature_and_legacy_protocol(self):
         subprocess.run([self.binary], check=True)
+
+    def test_display_command_to_frame_and_restart(self):
+        binary = str(Path(self.tmp.name) / 'display')
+        subprocess.run([shutil.which('c++') or 'c++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
+                        '-I' + str(ROOT / 'include'),
+                        '-I' + str(ROOT / '.pio/libdeps/esp32dev/ArduinoJson/src'),
+                        str(ROOT / 'tests/display.cpp'), '-o', binary], check=True)
+        subprocess.run([binary], check=True)
 
     def test_wet_colors_against_independent_hsl_reference(self):
         output = subprocess.check_output([self.binary, 'wet'], text=True)

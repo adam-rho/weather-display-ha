@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Edgelight display editor</title>
+<style>body{margin:0;padding:28px;background:#151819;color:#eee;font-family:system-ui}main{max-width:1250px;margin:auto}nav{padding:0 0 24px;color:#abb2b4}nav b{color:#f0974a;margin-left:30px}</style>
+<main><nav>Desktop dashboard <b>Edgelight</b></nav><edgelight-display-card></edgelight-display-card></main>
+<script type="module">
+import './edgelight-card.js';
+import {defaults,sample} from './display-model.js';
+window.sent=[];
+const card=document.querySelector('edgelight-display-card');
+card.setConfig({});
+let accepted={revision:0,requestId:'',config:defaults()};
+window.deviceOnline=true;
+window.noAck=false;
+window.refresh=()=>{card.hass={states:{
+  'sensor.edgelight_configuration':{state:String(accepted.revision),attributes:accepted},
+  'binary_sensor.edgelight_connected':{state:window.deviceOnline?'on':'off'},
+  'sensor.weather_display_hourly':{state:'24',attributes:{...sample(),generated_at:new Date().toISOString()}},
+},callService:async(domain,service,data)=>{
+  const command=data.command;window.sent.push(command);
+  if(window.noAck)return;
+  accepted={revision:accepted.revision+1,requestId:command.id,config:command.config};
+  setTimeout(window.refresh,100);
+}};};
+window.refresh();
+</script></html>

@@ -55,6 +55,11 @@ def temperature_f(value, unit):
         return t * 1.8 + 32
     return t
 
+def json_string(value):
+    if value is None:
+        return 'null'
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t') + '"'
+
 def temp_bucket(t):
     if t is None:
         return 0
@@ -269,7 +274,12 @@ else:
                     + ',' + str(e[3]) + ',' + str(e[4])
                     + ',' + ('null' if e[5] is None else str(e[5])) + ']'
                 )
-            payload = '{"h":[' + ','.join(entry_strs) + ']}'
+            time_strs = []
+            for h in hours:
+                time_strs.append(json_string(h.get('datetime')))
+            payload = ('{"h":[' + ','.join(entry_strs) + '],"times":['
+                       + ','.join(time_strs) + '],"generated_at":'
+                       + json_string(data.get('generated_at')) + '}')
             try:
                 # Ensure the device is in forecast mode every refresh. Retained,
                 # so it also pulls the strip out of demo after a reboot.

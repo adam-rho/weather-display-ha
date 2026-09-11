@@ -1,0 +1,42 @@
+# Merge these entries into the corresponding existing configuration sections.
+mqtt:
+  sensor:
+    - name: Edgelight Configuration
+      unique_id: edgelight_configuration
+      state_topic: weather/display/config/state
+      value_template: "{{ value_json.revision }}"
+      json_attributes_topic: weather/display/config/state
+    - name: Edgelight Command Result
+      unique_id: edgelight_command_result
+      state_topic: weather/display/config/result
+      value_template: "{{ value_json.status }}"
+      json_attributes_topic: weather/display/config/result
+  binary_sensor:
+    - name: Edgelight Connected
+      unique_id: edgelight_connected
+      state_topic: weather/display/availability
+      payload_on: online
+      payload_off: offline
+
+script:
+  edgelight_apply:
+    alias: Edgelight - Apply display settings
+    description: Send one complete display configuration and wait for device reporting.
+    mode: queued
+    max: 5
+    fields:
+      command:
+        required: true
+        selector:
+          object:
+    sequence:
+      - condition: template
+        value_template: >-
+          {{ command is mapping and command.id is string and
+             command.expectedRevision is number and command.config is mapping }}
+      - action: mqtt.publish
+        data:
+          topic: weather/display/config/set
+          payload: "{{ command | to_json }}"
+          qos: 1
+          retain: false

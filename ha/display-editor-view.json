@@ -1,0 +1,7 @@
+{
+  "title": "Edgelight",
+  "path": "edgelight",
+  "icon": "mdi:led-strip-variant",
+  "panel": true,
+  "cards": [{"type": "custom:edgelight-display-card"}]
+}

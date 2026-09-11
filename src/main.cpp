@@ -24,9 +24,11 @@
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 
 #include "secrets.h"
 #include "weather_colors.h"
+#include "display_engine.h"
 
 // ---------- hardware ----------
 #define NUM_LEDS    48
@@ -124,6 +126,20 @@ bool gotFirstFrame = false;
 // ---------- net ----------
 WiFiClient   net;
 PubSubClient mqtt(net);
+Display::Device displayDevice;
+Preferences displayStorage;
+JsonDocument displayForecast;
+bool displayStorageReady = false;
+
+bool publishJson(const char* topic, JsonVariantConst value, bool retained) {
+  std::string payload;
+  serializeJson(value, payload);
+  return mqtt.publish(topic, payload.c_str(), retained);
+}
+
+void reportDisplay() {
+  publishJson("weather/display/config/state", displayDevice.state(), true);
+}
 
 // ---------- helpers ----------
 void renderForecast() {
@@ -314,6 +330,16 @@ void applyLightning() {
 
 // ---------- MQTT ----------
 void onMqtt(char* topic, byte* payload, unsigned int len) {
+  if (!strcmp(topic, "weather/display/config/set")) {
+    JsonDocument command;
+    if (deserializeJson(command, payload, len)) return;
+    auto reply = displayDevice.apply(command, [](const std::string& saved) {
+      return displayStorageReady && displayStorage.putString("settings", saved.c_str()) == saved.size();
+    });
+    reportDisplay();
+    publishJson("weather/display/config/result", reply, false);
+    return;
+  }
   // Mode-switch topic: payload is "demo" or "forecast" (no JSON)
   if (!strcmp(topic, "weather/display/mode")) {
     char buf[32] = {0};
@@ -339,6 +365,11 @@ void onMqtt(char* topic, byte* payload, unsigned int len) {
     Serial.printf("mqtt: json parse failed: %s\n", err.c_str());
     return;
   }
+  if (!doc["h"].is<JsonArray>() || doc["h"].size() != 24) return;
+  for (JsonVariantConst hour : doc["h"].as<JsonArrayConst>()) {
+    if (!hour.is<JsonArrayConst>() || hour.size() < 2) return;
+  }
+  displayForecast.set(doc);
 
   anyLightning = false;
   anyWindy     = false;
@@ -391,10 +422,14 @@ void onMqtt(char* topic, byte* payload, unsigned int len) {
 void ensureMqtt() {
   if (mqtt.connected()) return;
   Serial.print("mqtt: connecting... ");
-  if (mqtt.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS)) {
+  if (mqtt.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS,
+                   "weather/display/availability", 1, true, "offline")) {
     Serial.println("ok");
     mqtt.subscribe("weather/hourly");
     mqtt.subscribe("weather/display/mode");
+    mqtt.subscribe("weather/display/config/set");
+    reportDisplay();
+    mqtt.publish("weather/display/availability", "online", true);
   } else {
     Serial.printf("failed, state=%d\n", mqtt.state());
     delay(2000);
@@ -431,9 +466,12 @@ void setup() {
 
   ensureWifi();
 
+  displayStorageReady = displayStorage.begin("edgelight", false);
+  if (displayStorageReady) displayDevice.restore(displayStorage.getString("settings", "").c_str());
+
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMqtt);
-  mqtt.setBufferSize(4096);
+  mqtt.setBufferSize(8192);
 
   // ---- OTA (ArduinoOTA over WiFi) ----
   ArduinoOTA.setHostname("weather-display");
@@ -471,17 +509,13 @@ void loop() {
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     leds[tempLed(0)] = CHSV(160, 200, beatsin8(30, 10, 60));
   } else {
-    renderForecast();
-    applyBreathing();
-    applyWind();
-    applyLightning();
+    auto frame = displayDevice.render(displayForecast, millis());
+    for (int i = 0; i < 48; ++i) leds[i] = CRGB(frame[i]);
   }
 
   // Day/night global brightness. Forecast mode only; demo stays at full.
   uint8_t target = BRIGHTNESS;
-  if (currentMode == MODE_FORECAST && gotFirstFrame && hourly[0].isNight) {
-    target = NIGHT_BRIGHTNESS;
-  }
+  // Forecast renderer already includes the user's global brightness.
   FastLED.setBrightness(target);
 
   FastLED.show();

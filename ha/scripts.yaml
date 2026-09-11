@@ -15,6 +15,7 @@ weather_display_update:
     - action: python_script.weather_display_publish
       data:
         forecast_data: "{{ forecast_response }}"
+        generated_at: "{{ now().isoformat() }}"
 
 weather_display_demo:
   alias: Weather Display - Demo Mode

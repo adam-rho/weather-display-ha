@@ -10,3 +10,7 @@ platformio_local.ini
 
 # Python test bytecode.
 __pycache__/
+node_modules/
+dist/
+test-results/
+playwright-report/

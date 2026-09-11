@@ -212,6 +212,21 @@ check as part of acceptance, including visual approval on the installed dashboar
 - Required build checks include the browser production build, automated tests,
   and both USB-target and OTA-target firmware builds.
 
+### Named acceptance evidence
+
+| Criterion | Named check |
+|---|---|
+| Physical mapping, atomic apply, persistence, invalid/stale requests, retries | `test_display_command_to_frame_and_restart` |
+| Browser/firmware color and effect parity, all row combinations | `browser and real firmware renderer agree for edits, effects and legacy data` |
+| Ordered temperature colors and row assignment | `preview follows physical row assignments and ordered temperature colors` |
+| HA-to-device UI confirmation | `edit an edge without publishing, then apply and wait for device confirmation` |
+| Palette, units, sample isolation and discard | `color edits, unit changes and sample controls stay local until apply` |
+| Offline and unconfirmed retries | `offline display cannot apply; unconfirmed requests preserve their ID on retry` |
+| Narrow layout, keyboard operation, LED guide | `mobile layout keeps all 48 lights, horizontal bar, and keyboard controls` |
+| Forecast timestamps and unchanged tuple indices | `test_forecast_metadata_keeps_hour_indices` |
+| Native assets and firmware builds | `npm run build`, `pio run -e esp32dev -e esp32dev-ota` |
+| Actual dashboard and wall display | User visual approval, live MQTT apply/report, reboot persistence check |
+
 ## Out of Scope
 
 - Android app changes, subscriptions, and preset synchronization between devices.

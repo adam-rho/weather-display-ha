@@ -1,0 +1,11 @@
+{
+  "name": "edgelight-display-editor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/editor.test.mjs",
+    "test:browser": "playwright test",
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": { "@playwright/test": "^1.58.0" }
+}
