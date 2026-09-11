@@ -7,10 +7,25 @@ row is sky conditions. "Now" is at the left end of each row; tomorrow at this
 time is at the right. Storm hours flash yellow, windy hours shimmer, and the
 sunrise and sunset cells breathe.
 
-Home Assistant classifies the forecast into small integer buckets and
-publishes them over MQTT every 15 minutes. The ESP32 owns every color and
-animation. Tuning the palette means editing `src/main.cpp` and reflashing;
-nothing on the HA side changes.
+Home Assistant publishes forecast categories and temperatures over MQTT every
+15 minutes. The ESP32 applies the Android app's default color rules from
+`include/weather_colors.h`:
+
+- Temperature blends smoothly between color stops at 0, 20, 32, 50, 65, 78
+  and 90°F using OKLCH interpolation. Colder/hotter values hold the end colors.
+- Conditions use sunny yellow, partly cloudy gold-gray, cloudy blue-gray,
+  near-white fog, green rain, teal-blue snow and violet sleet.
+- Wet hours use three strengths: buckets 1–3 are light, 4–7 medium, 8–10 heavy.
+  The color gets darker as strength increases. Dry conditions keep their color.
+- Night conditions receive the app's dim and cool tint. Missing conditions stay off.
+
+Wind and lightning retain their existing LED animations. The strip also retains
+its global night brightness setting and HA's 20:00–07:00 night-time estimate.
+
+To update an existing installation, flash the firmware, replace the HA Python
+script, then run **Weather Display - Publish Forecast**. Both updates are needed
+for smooth temperature colors. Physical LED appearance still needs an on-device
+check; these defaults use the same RGB values as the app.
 
 ## What you need
 
@@ -83,22 +98,30 @@ Hour 0 is the current hour; hour 23 is 23 hours out. Data is on GPIO 18
 ### `weather/hourly` (retained, published by HA)
 
 ```json
-{"h": [[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket], ... 24 entries]}
+{"h": [[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket, temperature_f], ... 24 entries]}
 ```
 
 | Field | Range | Meaning |
 |-------|-------|---------|
 | `temp_bucket` | 0-7 | `0 unknown, 1 <20°F, 2 20-31, 3 32-49, 4 50-64, 5 65-77, 6 78-89, 7 90+` |
-| `cond_code` | 0-12 | HA condition string mapped by `COND_MAP` in the python script: sunny, clear-night, partlycloudy, cloudy, windy, windy-variant, fog, rainy/pouring, snowy, snowy-rainy, lightning(-rainy), hail/exceptional |
+| `cond_code` | 0-13 | Stable HA wire codes mapped to seven visual categories; see below. |
 | `is_night` | 0/1 | 20:00-06:59 local. The firmware dims night cells so cloudy nights don't wash out the strip. |
-| `precip_bucket` | 0-10 | From `precipitation_probability` (10% bands), falling back to amount in mm. Scales brightness on wet hours. |
+| `precip_bucket` | 0-10 | From `precipitation_probability` (10% bands), falling back to amount in mm. Selects light/medium/heavy treatment on wet hours only. |
 | `wind_bucket` | 0-8 | Wind speed normalized to mph, then banded. Scales the shimmer amplitude. |
+| `temperature_f` | number or null | Actual temperature in °F, converted automatically from °C. Null means no data. |
 
-Temperature buckets assume °F. If your HA is metric the temperatures arrive in
-°C; edit `temp_bucket()` in the python script to taste. Wind and precipitation
-units are read from the weather entity and converted automatically.
+The first five fields retain their meaning for older firmware. Updated firmware
+also accepts older 2-, 3- and 5-field payloads, using the first field's temperature
+bucket when the sixth field is absent. Missing precip/wind values default to off.
+Temperature, wind and precipitation units are read from the weather entity;
+missing units default to °F, mph and mm.
 
-Older 3-tuple payloads still render (precip and wind default to off).
+Condition codes: 0 unknown, 1 sunny, 2 clear-night, 3 partlycloudy, 4 cloudy,
+5 windy, 6 windy-variant, 7 fog, 8 rainy/pouring, 9 snowy, 10 snowy-rainy,
+11 lightning/lightning-rainy, 12 exceptional, 13 hail. Clear-night uses sunny's
+color with night treatment. Windy uses sunny, windy-variant uses cloudy, and
+hail uses sleet. Thunder uses rain plus lightning. Exceptional has no known
+sky category and stays off; it no longer paints an alert-red condition cell.
 
 ### `weather/display/mode` (retained, plain string)
 
@@ -118,16 +141,27 @@ minutes.
 
 ## Firmware structure
 
-All in `src/main.cpp`:
+Color rules are in `include/weather_colors.h`; hardware and animations are in
+`src/main.cpp`:
 
-- `TEMP_PALETTE`, `CONDITION_PALETTE`, `LIGHTNING_BOLT`: every color the device
-  can show
+- `TEMP_PALETTE`, `CONDITION_PALETTE`, `WET_COLORS`: Android default colors
+- `LIGHTNING_BOLT`: animation overlay color
 - `renderForecast()` / `renderDemo()`: build the static frame
 - `applyBreathing()` / `applyWind()` / `applyLightning()`: per-frame overlays
 - `onMqtt()`: parses both topics and handles the mode switch
 
 Keep `COND_MAP` in `ha/python_scripts/weather_display_publish.py` in step with
 the condition enum in `src/main.cpp`. A new condition needs both.
+
+## Verification
+
+```bash
+pio run -e esp32dev
+python3 -m unittest discover -s tests -v
+```
+
+The tests compile the portable color rules with a host C++ compiler and exercise
+the HA publisher with fake forecast data. No broker or device is contacted.
 
 ## Related
 

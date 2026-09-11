@@ -1,18 +1,19 @@
 # Weather Display MQTT publisher.
 # Classifies the next 24 hours into
-#   (temp_bucket, cond_code, is_night, precip_bucket, wind_bucket)
+#   (temp_bucket, cond_code, is_night, precip_bucket, wind_bucket, temperature_f)
 # and publishes them. The FastLED firmware owns the palette, so this script
-# never touches RGB values -- it only categorizes.
+# never touches RGB values. Raw °F enables continuous temperature colors.
 #
-# Payload: {"h":[[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket], ... 24 entries]}
+# Payload: {"h":[[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket, temperature_f], ... 24 entries]}
 # is_night is 0/1. The firmware applies a brightness dim when set so
 # partlycloudy/cloudy nights don't whitewash the strip.
 #
-# precip_bucket (0..10): 0 = no data / no precip. Higher values ramp brightness
-# on wet hours. Sourced from precipitation_probability (percent) when present,
+# precip_bucket (0..10): 0 = no data. Buckets 1-3 / 4-7 / 8-10 select
+# light / medium / heavy wet colors on rain, snow and sleet hours.
+# Sourced from precipitation_probability (percent) when present,
 # else falls back to precipitation (amount, converted to mm).
 #
-# wind_bucket (0..8): 0 = calm / no data. Scales wind shimmer amplitude on the
+# wind_bucket (0..8): 0 = no data. Scales wind shimmer amplitude on the
 # firmware side. Wind speed is normalized to mph from the weather entity's
 # wind_speed_unit before bucketing.
 #
@@ -38,9 +39,21 @@ COND_MAP = {
     'snowy-rainy':     10,
     'lightning-rainy': 11,
     'lightning':       11,   # dry thunder -- same look as lightning-rainy
-    'hail':            12,   # treat as exceptional (rare + notable)
+    'hail':            13,   # frozen mix, shares the sleet color
     'exceptional':     12,
 }
+
+def temperature_f(value, unit):
+    try:
+        t = float(value)
+    except (TypeError, ValueError):
+        return None
+    # Reject NaN/infinity so the MQTT payload remains valid JSON.
+    if t != t or t == float('inf') or t == -float('inf'):
+        return None
+    if unit == '°C':
+        return t * 1.8 + 32
+    return t
 
 def temp_bucket(t):
     if t is None:
@@ -73,7 +86,7 @@ def precip_bucket_pct(pct):
     return b
 
 def precip_bucket_mm(mm):
-    # Amount (millimeters) -> 10 bands split at 0.1/0.3/0.5/1/2/4/8/16/32 mm.
+    # Amount: dry = 1, trace (<0.1 mm) = 2, then split at 0.5/1/2/4/8/16/32.
     # None / negative / non-numeric -> 0. 0.0 mm lights bucket 1 (dry-but-present).
     if mm is None:
         return 0
@@ -82,8 +95,8 @@ def precip_bucket_mm(mm):
     except (TypeError, ValueError):
         return 0
     if m < 0:     return 0
-    if m < 0.1:   return 1
-    if m < 0.3:   return 2
+    if m == 0:    return 1
+    if m < 0.1:   return 2
     if m < 0.5:   return 3
     if m < 1.0:   return 4
     if m < 2.0:   return 5
@@ -94,22 +107,22 @@ def precip_bucket_mm(mm):
     return 10
 
 def wind_bucket_mph(mph):
-    # Wind speed in mph -> 8 bands. None / <1 / non-numeric -> 0 (calm / no data).
-    # Bands: 1-4->1, 5-9->2, 10-14->3, 15-19->4, 20-29->5, 30-39->6, 40-49->7, >=50->8.
+    # Wind speed in mph -> 8 bands. None / negative / non-numeric -> 0 (no data).
+    # Bands: 0-<5->1, 5-9->2, 10-14->3, 15-19->4, 20-29->5, 30-39->6, 40-49->7, >=50->8.
     if mph is None:
         return 0
     try:
         w = float(mph)
     except (TypeError, ValueError):
         return 0
-    if w < 1:     return 0
-    if w <= 4:    return 1
-    if w <= 9:    return 2
-    if w <= 14:   return 3
-    if w <= 19:   return 4
-    if w <= 29:   return 5
-    if w <= 39:   return 6
-    if w <= 49:   return 7
+    if w < 0:     return 0
+    if w < 5:     return 1
+    if w < 10:   return 2
+    if w < 15:   return 3
+    if w < 20:   return 4
+    if w < 30:   return 5
+    if w < 40:   return 6
+    if w < 50:   return 7
     return 8
 
 # Wind speed unit -> mph multiplier. Applied to per-hour wind_speed before
@@ -184,11 +197,13 @@ else:
     else:
         # Look up the weather entity's declared units so we can normalize
         # wind (-> mph) and precip amount (-> mm) before bucketing.
+        temp_unit = '°F'
         wind_scale = 1.0
         precip_scale = 1.0
         try:
             st = hass.states.get(forecast_entity_id)
             if st is not None:
+                temp_unit = st.attributes.get('temperature_unit') or '°F'
                 w_unit = st.attributes.get('wind_speed_unit')
                 p_unit = st.attributes.get('precipitation_unit')
                 if w_unit in WIND_TO_MPH:
@@ -214,12 +229,12 @@ else:
             offset = local_utc_offset_hours()
             out = []
             for h in hours:
-                t = h.get('temperature')
+                t = temperature_f(h.get('temperature'), temp_unit)
                 cond_str = h.get('condition') or ''
                 dt_str = h.get('datetime') or ''
                 bucket = temp_bucket(t)
                 code = COND_MAP.get(cond_str, 0)
-                night = is_night_hour(dt_str, offset)
+                night = 1 if cond_str == 'clear-night' else is_night_hour(dt_str, offset)
 
                 # Precip: prefer probability, fall back to amount in mm.
                 pop = h.get('precipitation_probability')
@@ -245,13 +260,14 @@ else:
                 else:
                     wb = 0
 
-                out.append([bucket, code, night, pb, wb])
+                out.append([bucket, code, night, pb, wb, t])
 
             entry_strs = []
             for e in out:
                 entry_strs.append(
                     '[' + str(e[0]) + ',' + str(e[1]) + ',' + str(e[2])
-                    + ',' + str(e[3]) + ',' + str(e[4]) + ']'
+                    + ',' + str(e[3]) + ',' + str(e[4])
+                    + ',' + ('null' if e[5] is None else str(e[5])) + ']'
                 )
             payload = '{"h":[' + ','.join(entry_strs) + ']}'
             try:

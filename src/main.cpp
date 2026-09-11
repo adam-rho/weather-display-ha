@@ -10,13 +10,13 @@
 //   lightning  -> storm cells flash yellow over a rain base on a ~12.7s cycle
 //
 // MQTT (retained, published by HA every 15 min):
-//   weather/hourly  {"h":[[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket], ... 24 entries]}
-//     - precip_bucket (0..10, optional): scales condition-cell brightness on wet hours.
+//   weather/hourly  {"h":[[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket, temperature_f], ... 24 entries]}
+//     - precip_bucket (0..10, optional): selects light/medium/heavy wet colors.
 //     - wind_bucket   (0..8,  optional): scales the wind-shimmer amplitude.
 //   Older 3-tuple payloads still render (precip/wind default to 0 = off, no crash).
 //
-// Condition codes match the HA NWS integration's twelve possible outputs.
-// HA only classifies. All color logic lives in this file (see PALETTES below).
+// HA sends condition codes and normalized temperature. Color rules live in
+// include/weather_colors.h.
 
 #include <Arduino.h>
 #include <FastLED.h>
@@ -26,6 +26,7 @@
 #include <ArduinoJson.h>
 
 #include "secrets.h"
+#include "weather_colors.h"
 
 // ---------- hardware ----------
 #define NUM_LEDS    48
@@ -42,38 +43,8 @@ CRGB leds[NUM_LEDS];
 inline uint8_t tempLed(uint8_t hour)   { return 47 - hour; }       // snake-reversed (top)
 inline uint8_t precipLed(uint8_t hour) { return hour; }            // 0..23 LTR (bottom)
 
-// ==============================================================
-// PALETTES -- single source of truth for all weather colors.
-// Tune these and reflash. HA only sends category indices.
-// ==============================================================
-
-// --- Temperature buckets (matches HA-side bucketer; keep in sync) ---
-// Bucket | Range (°F)
-//   0    | no data
-//   1    | < 20    deep cold
-//   2    | 20-31   cold
-//   3    | 32-49   cool
-//   4    | 50-64   mild
-//   5    | 65-77   warm
-//   6    | 78-89   hot
-//   7    | 90+     very hot
-const CRGB TEMP_PALETTE[] = {
-  CRGB(0x00, 0x00, 0x00),   // 0  no data
-  CRGB(0x00, 0x00, 0x80),   // 1  <20    deep navy
-  CRGB(0x00, 0x40, 0xFF),   // 2  20-31  cold blue
-  CRGB(0x40, 0xC8, 0xFF),   // 3  32-49  cool cyan
-  CRGB(0xFF, 0xD8, 0x80),   // 4  50-64  warm pale
-  CRGB(0xFF, 0xC8, 0x00),   // 5  65-77  amber
-  CRGB(0xFF, 0x40, 0x00),   // 6  78-89  red-orange
-  CRGB(0xFF, 0x00, 0x00),   // 7  90+    pure red
-};
-const uint8_t TEMP_PALETTE_LEN = sizeof(TEMP_PALETTE) / sizeof(TEMP_PALETTE[0]);
-
-// --- Condition codes ---
-// Twelve real outputs of the HA NWS integration (plus 0 = unknown).
-// `pouring`, `lightning` (bare), and `hail` are intentionally omitted -- NWS
-// never emits them through this integration. Keep this enum in lockstep with
-// COND_MAP in /config/python_scripts/weather_display_publish.py.
+// HA condition wire codes. Keep in sync with COND_MAP in the publisher and
+// WeatherColors::conditionBucket; wire codes are not palette indices.
 enum Condition {
   COND_UNKNOWN          = 0,
   COND_SUNNY            = 1,
@@ -88,32 +59,8 @@ enum Condition {
   COND_SNOWY_RAINY      = 10,
   COND_LIGHTNING_RAINY  = 11,
   COND_EXCEPTIONAL      = 12,
+  COND_HAIL             = 13,
 };
-
-// palette v2, synced from the Edgelight product reference (the product esp32
-// forked from this build). This HA build has only two color channels --
-// temperature and conditions -- and intentionally has NO precip color channel
-// and NO wind color channel. Precip modulates the condition cell's
-// BRIGHTNESS only; wind modulates the wind-shimmer AMPLITUDE only.
-//
-// CRGB() args are (R,G,B) even though COLOR_ORDER is GRB (the driver reorders
-// on output; the constructor is always R,G,B).
-const CRGB CONDITION_PALETTE[] = {
-  CRGB(  0,   0,   0),   // 0  unknown         off
-  CRGB(  0, 221, 255),   // 1  sunny           cyan
-  CRGB( 18, 108, 122),   // 2  clear-night     dark teal; night treatment differentiates it
-  CRGB(140, 156,  38),   // 3  partlycloudy    olive
-  CRGB( 69,  75,  12),   // 4  cloudy          dark olive
-  CRGB(255, 190,   0),   // 5  windy           gold, legacy slot + wind anim
-  CRGB(140, 133, 120),   // 6  windy-variant   warm gray, legacy slot
-  CRGB( 71,  94, 118),   // 7  fog             slate blue-gray
-  CRGB(  0, 255,  12),   // 8  rainy           radar green
-  CRGB( 14,   0, 209),   // 9  snowy           deep blue
-  CRGB(242,   0, 255),   // 10 snowy-rainy     magenta
-  CRGB(  0, 255,  12),   // 11 lightning-rainy rain green (storm = rain + yellow bolt; no own color)
-  CRGB(245,   0,   0),   // 12 exceptional     alert red
-};
-const uint8_t CONDITION_PALETTE_LEN = sizeof(CONDITION_PALETTE) / sizeof(CONDITION_PALETTE[0]);
 
 // --- Overlay colors ---
 const CRGB LIGHTNING_BOLT(255, 255,  56);  // pure yellow (FFFF38), tuned in the app's Animation Lab
@@ -130,14 +77,8 @@ inline bool isWindy(uint8_t cond) {
   return cond == COND_WINDY || cond == COND_WINDY_VARIANT;
 }
 
-CRGB tempColor(uint8_t bucket) {
-  if (bucket >= TEMP_PALETTE_LEN) return CRGB::Black;
-  return TEMP_PALETTE[bucket];
-}
-
 CRGB condColor(uint8_t cond) {
-  if (cond >= CONDITION_PALETTE_LEN) return CRGB::Black;
-  return CONDITION_PALETTE[cond];
+  return CRGB(WeatherColors::condition(cond));
 }
 
 // ---------- mode / forecast state ----------
@@ -145,22 +86,13 @@ enum Mode { MODE_FORECAST, MODE_DEMO };
 Mode currentMode = MODE_FORECAST;
 
 struct Hour {
-  uint8_t tempBucket;
+  CRGB temperatureColor;
   uint8_t cond;
   uint8_t isNight;
-  uint8_t precipBucket;   // 0..10, 0 = no data / no precip -> no brightness scaling
+  uint8_t precipBucket;   // 0..10, 0 = no data -> unmodified condition color
   uint8_t windBucket;     // 0..8,  0 = calm / no data      -> no shimmer amp scaling
 };
 Hour hourly[24];
-
-// Mirrors PaletteStore::precipBrightness() in
-// edgelight-weather-esp32/src/palette_store.cpp. bucket 0 or out-of-range ->
-// 255 (no scaling). Else 85 + 17*bucket: bucket1=102 (~40% floor so light
-// precip stays visible even under the night dim), bucket10=255 (full).
-inline uint8_t precipBrightness(uint8_t bucket) {
-  if (bucket == 0 || bucket > 10) return 255;
-  return (uint8_t)(85 + 17 * bucket);
-}
 
 // Amplitude scale factor d in [0..1] derived from the wind bucket. Mirrors
 // the reference's ampScale = 1.0 + 2.0*d formula in
@@ -179,17 +111,6 @@ inline float windAmpD(uint8_t bucket) {
 // Driven by hourly[0].isNight from the HA payload (flips at the hour
 // boundary that contains sunrise/sunset).
 #define NIGHT_BRIGHTNESS 128
-
-// Night treatment (palette v2, synced from the Edgelight product reference).
-// v2 replaced the old heavy blue tint with a hue-preserving dim + a light cool
-// cast, so e.g. cloudy stays gray at night instead of turning fog-blue, and
-// clear-night (now gold) reads as dimmed-gold rather than blue. Per condition
-// cell: dim first hue-preserving with nscale8(115) (~45% brightness), then a
-// light cool tint via nblend toward NIGHT_TINT at strength 50 (~20%). The old
-// form blended toward NIGHT_TINT at ~140 (~55%), which over-blued at night.
-const CRGB NIGHT_TINT(15, 25, 70);
-#define NIGHT_DIM      115  // hue-preserving dim, 0-255 (~45% brightness)
-#define NIGHT_TINT_AMT  50  // 0-255 blend strength toward NIGHT_TINT (~20%)
 
 // Sunrise/sunset hour indices, derived from the is_night transitions in the
 // MQTT payload. -1 means "no transition found in the next 24h" (rare edge:
@@ -210,26 +131,13 @@ void renderForecast() {
     // Temperature row always renders full-color -- temp reads the same day or
     // night. Night dim + blue tint apply only to the condition (bottom) row,
     // which is where the "white sea of cloudy" problem was.
-    leds[tempLed(h)]   = tempColor(hourly[h].tempBucket);
-    leds[precipLed(h)] = condColor(hourly[h].cond);
-
-    // Precip-brightness ramp. On wet hours, scale the condition cell's
-    // brightness by precip intensity. bucket 0 / out-of-range returns 255 so
-    // dry hours pass through unchanged. Applied BEFORE the night treatment
-    // so a light-rain-at-night hour stacks both dims (precip floor * night
-    // dim) and reads distinctly dimmer than a heavy-rain-at-night hour.
-    leds[precipLed(h)].nscale8(precipBrightness(hourly[h].precipBucket));
-
-    if (hourly[h].isNight) {
-      // v2 night treatment: hue-preserving dim first, then a light cool tint.
-      // Global brightness is still handled in loop() via setBrightness().
-      leds[precipLed(h)].nscale8(NIGHT_DIM);
-      nblend(leds[precipLed(h)], NIGHT_TINT, NIGHT_TINT_AMT);
-    }
+    leds[tempLed(h)] = hourly[h].temperatureColor;
+    leds[precipLed(h)] = CRGB(WeatherColors::condition(
+        hourly[h].cond, hourly[h].precipBucket, hourly[h].isNight));
   }
 }
 
-// Demo mode: temp gradient on top (3 LEDs per bucket), then the 12 conditions
+// Demo mode: continuous temperature gradient on top, then 12 condition examples
 // on the bottom (2 LEDs per condition), in enum order. Keeping conditions in
 // fixed slots so the animation overlays know which LEDs to hit.
 const uint8_t DEMO_COND[] = {
@@ -244,7 +152,7 @@ const uint8_t DEMO_COND[] = {
   COND_SNOWY,            // slot 8
   COND_SNOWY_RAINY,      // slot 9
   COND_LIGHTNING_RAINY,  // slot 10
-  COND_EXCEPTIONAL,      // slot 11
+  COND_HAIL,             // slot 11
 };
 const uint8_t DEMO_COND_LEN = sizeof(DEMO_COND) / sizeof(DEMO_COND[0]);
 
@@ -255,13 +163,9 @@ inline uint8_t demoLedB(uint8_t slot) { return precipLed(slot * 2 + 1); }
 void renderDemo() {
   fill_solid(leds, NUM_LEDS, CRGB::Black);
 
-  // Temperature gradient across the top row, painted left to right in palette
-  // order: bucket 0 at top-left, bucket 7 at top-right. tempLed() handles the
-  // snake mapping so we just walk i*3+k as a logical 0..23 index.
-  for (uint8_t i = 0; i < TEMP_PALETTE_LEN && i < 8; i++) {
-    for (uint8_t k = 0; k < 3; k++) {
-      leds[tempLed(i * 3 + k)] = TEMP_PALETTE[i];
-    }
+  // Continuous 0..90°F ramp, matching Android's default temperature scale.
+  for (uint8_t h = 0; h < 24; h++) {
+    leds[tempLed(h)] = CRGB(WeatherColors::temperature(90.0f * h / 23));
   }
 
   // Twelve conditions across the bottom row (2 LEDs each = 24 LEDs).
@@ -429,7 +333,7 @@ void onMqtt(char* topic, byte* payload, unsigned int len) {
 
   if (strcmp(topic, "weather/hourly")) return;
 
-  StaticJsonDocument<2048> doc;
+  JsonDocument doc;
   DeserializationError err = deserializeJson(doc, payload, len);
   if (err) {
     Serial.printf("mqtt: json parse failed: %s\n", err.c_str());
@@ -441,7 +345,9 @@ void onMqtt(char* topic, byte* payload, unsigned int len) {
   JsonArray h = doc["h"];
   for (uint8_t i = 0; i < 24 && i < h.size(); i++) {
     JsonArray e = h[i];
-    hourly[i].tempBucket   = e[0].as<uint8_t>();
+    // Sixth field is normalized °F. Explicit null means missing; absent means
+    // a retained legacy payload, whose first-field temperature bucket still works.
+    hourly[i].temperatureColor = CRGB(WeatherColors::forecastTemperature(e));
     hourly[i].cond         = e[1].as<uint8_t>();
     // is_night is optional (3rd tuple element). Defaults to 0 for backward
     // compatibility with older 2-tuple retained payloads.
@@ -449,7 +355,7 @@ void onMqtt(char* topic, byte* payload, unsigned int len) {
     // precip_bucket (0..10) and wind_bucket (0..8) are optional 4th/5th tuple
     // elements. Default to 0 for older 3-tuple payloads -- 0 means "no data",
     // which the render path treats as "no brightness scaling / no shimmer
-    // amp scaling", so old payloads render identically to the pre-v3 firmware.
+    // amp scaling". Legacy categories use the updated palette.
     hourly[i].precipBucket = (e.size() >= 4) ? e[3].as<uint8_t>() : 0;
     hourly[i].windBucket   = (e.size() >= 5) ? e[4].as<uint8_t>() : 0;
     if (isLightning(hourly[i].cond)) anyLightning = true;
@@ -527,7 +433,7 @@ void setup() {
 
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMqtt);
-  mqtt.setBufferSize(2048);
+  mqtt.setBufferSize(4096);
 
   // ---- OTA (ArduinoOTA over WiFi) ----
   ArduinoOTA.setHostname("weather-display");

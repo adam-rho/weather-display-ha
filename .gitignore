@@ -7,3 +7,6 @@ include/secrets.h
 
 # Per-machine PlatformIO overrides (device IP for OTA).
 platformio_local.ini
+
+# Python test bytecode.
+__pycache__/
