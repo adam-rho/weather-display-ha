@@ -54,7 +54,7 @@ inline JsonDocument defaults() {
         stop["color"] = hex(WeatherColors::TEMP_PALETTE[i+1]);
         d["conditions"].add(hex(WeatherColors::CONDITION_PALETTE[i+1]));
     }
-    d["wet"] = true; d["night"] = true;
+    d["wet"] = true;
     d["dayBrightness"] = 100; d["nightBrightness"] = 100.0 * 128 / 255;
     for (const char* name : {"breathing", "wind", "lightning"}) {
         auto effect = d["animations"][name].to<JsonObject>();
@@ -79,7 +79,7 @@ inline std::string validate(JsonVariantConst c) {
     if (c["conditions"].size() != 7) return "Seven condition colors are required";
     for (JsonVariantConst color : c["conditions"].as<JsonArrayConst>())
         if (!validColor(color)) return "Invalid condition color";
-    if (!c["wet"].is<bool>() || !c["night"].is<bool>()) return "Invalid treatment toggle";
+    if (!c["wet"].is<bool>()) return "Invalid treatment toggle";
     if (!number(c["dayBrightness"], 0, 100) || !number(c["nightBrightness"], 0, 100))
         return "Brightness must be 0 to 100%";
     for (const char* name : {"breathing", "wind", "lightning"}) {
@@ -214,8 +214,6 @@ inline Frame render(JsonVariantConst config, JsonVariantConst forecast, double e
                     int precip = e[3] | 0;
                     if (config["wet"] == true && bucket >= 5 && precip >= 1 && precip <= 10)
                         color = wetColor(color, precip);
-                    if (config["night"] == true && e[2] == 1)
-                        color = blend(scale(color,115.0/255), 0x0F1946,50.0/255);
                 }
             }
             int led = row == 0 ? 47-h : h;

@@ -17,7 +17,7 @@ Home Assistant publishes forecast categories and temperatures over MQTT every
   near-white fog, green rain, teal-blue snow and violet sleet.
 - Wet hours use three strengths: buckets 1–3 are light, 4–7 medium, 8–10 heavy.
   The color gets darker as strength increases. Dry conditions keep their color.
-- Night conditions receive the app's dim and cool tint. Missing conditions stay off.
+- Conditions render the same color day and night. Missing conditions stay off.
 
 Wind and lightning retain their existing LED animations. The strip also retains
 its global night brightness setting and HA's 20:00–07:00 night-time estimate.
@@ -105,7 +105,7 @@ Hour 0 is the current hour; hour 23 is 23 hours out. Data is on GPIO 18
 |-------|-------|---------|
 | `temp_bucket` | 0-7 | `0 unknown, 1 <20°F, 2 20-31, 3 32-49, 4 50-64, 5 65-77, 6 78-89, 7 90+` |
 | `cond_code` | 0-13 | Stable HA wire codes mapped to seven visual categories; see below. |
-| `is_night` | 0/1 | 20:00-06:59 local. The firmware dims night cells so cloudy nights don't wash out the strip. |
+| `is_night` | 0/1 | 20:00-06:59 local. Drives global night brightness and the sunrise/sunset breathing hours. No per-cell dimming. |
 | `precip_bucket` | 0-10 | From `precipitation_probability` (10% bands), falling back to amount in mm. Selects light/medium/heavy treatment on wet hours only. |
 | `wind_bucket` | 0-8 | Wind speed normalized to mph, then banded. Scales the shimmer amplitude. |
 | `temperature_f` | number or null | Actual temperature in °F, converted automatically from °C. Null means no data. |

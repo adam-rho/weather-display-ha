@@ -84,19 +84,12 @@ constexpr uint32_t WET_COLORS[][3] = {
     {0x7AF1FF, 0x1A99A8, 0x164F55},
     {0xAF7AFF, 0x531AA8, 0x2F1655},
 };
-inline uint32_t condition(uint8_t code, uint8_t precip = 0, bool night = false) {
+inline uint32_t condition(uint8_t code, uint8_t precip = 0) {
     uint8_t bucket = conditionBucket(code);
     if (!bucket) return 0;
     uint32_t color = CONDITION_PALETTE[bucket];
     if (bucket >= 5 && precip >= 1 && precip <= 10)
         color = WET_COLORS[bucket-5][precip <= 3 ? 0 : precip <= 7 ? 1 : 2];
-    if (!night) return color;
-    uint32_t result = 0;
-    const int tint[] = {70, 25, 15};
-    for (int i = 0; i < 3; ++i) {
-        int dimmed = byte(((color >> (i*8)) & 255) * (115.0/255));
-        result |= uint32_t(byte(dimmed + (tint[i]-dimmed)*(50.0/255))) << (i*8);
-    }
-    return result;
+    return color;
 }
 } // namespace WeatherColors

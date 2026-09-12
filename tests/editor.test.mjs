@@ -56,3 +56,13 @@ test('preview glow keeps hue and expresses dimming as intensity, never as black'
   assert.equal(teal.color, 0x3BDBFF);
   assert.ok(Math.abs(teal.intensity-0x70/255)<1e-9);
 });
+
+test('night hours render conditions at full color; legacy configs with a night key still validate', () => {
+  const config = defaults(); config.nightBrightness = 100;   // isolate per-hour dimming from global night brightness
+  assert.equal('night' in config, false);
+  const hour = [4,4,0,0,0,60];                 // cloudy, day
+  const day = render(config,{h:[hour]},0)[0];
+  const night = render(config,{h:[[4,4,1,0,0,60]]},0)[0];
+  assert.equal(night, day);
+  assert.equal(validate({...config, night:true}), '');
+});

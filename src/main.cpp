@@ -144,12 +144,12 @@ void reportDisplay() {
 // ---------- helpers ----------
 void renderForecast() {
   for (uint8_t h = 0; h < 24; h++) {
-    // Temperature row always renders full-color -- temp reads the same day or
-    // night. Night dim + blue tint apply only to the condition (bottom) row,
-    // which is where the "white sea of cloudy" problem was.
+    // Both rows render full color day and night. Per-hour night dimming was
+    // removed: it was indistinguishable from precipitation saturation. Global
+    // night brightness still applies to the whole strip.
     leds[tempLed(h)] = hourly[h].temperatureColor;
     leds[precipLed(h)] = CRGB(WeatherColors::condition(
-        hourly[h].cond, hourly[h].precipBucket, hourly[h].isNight));
+        hourly[h].cond, hourly[h].precipBucket));
   }
 }
 

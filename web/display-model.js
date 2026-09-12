@@ -9,14 +9,14 @@ const channels=c=>[c>>16&255,c>>8&255,c&255];
 const scale=(c,f)=>pack(channels(c).map(v=>v*f));
 const blend=(c,t,f)=>pack(channels(c).map((v,i)=>v+(channels(t)[i]-v)*f));
 // Preview only: an LED is light, not paint. Split a color into its hue at full drive plus an intensity,
-// so dimming (animations, night blend, off) shows as a fainter glow instead of black on the wall.
+// so dimming (animations, off) shows as a fainter glow instead of black on the wall.
 export const glow=c=>{const ch=channels(c),m=Math.max(...ch);return m?{color:pack(ch.map(v=>v*255/m)),intensity:m/255}:{color:0,intensity:0};};
 export const conditionBucket=c=>[0,1,1,2,3,1,3,4,5,6,7,5,0,7][c]||0;
 export function defaults() {
   return {version:1,top:'temperature',bottom:'conditions',
     temperature:stops.map((value,i)=>({value,color:colors[i]})),
     conditions:['#FFD34E','#C3B47A','#8795A6','#F2F4F5','#43C47E','#9BE0E8','#A66BFF'],
-    wet:true,night:true,dayBrightness:100,nightBrightness:100*128/255,
+    wet:true,dayBrightness:100,nightBrightness:100*128/255,
     animations:{breathing:{enabled:true,speed:1,strength:100},
       wind:{enabled:true,speed:1,strength:100,target:'conditions',threshold:10},
       lightning:{enabled:true,speed:1,strength:100,color:'#FFFF38'}}};
@@ -29,7 +29,7 @@ export function validate(c) {
   if(!Array.isArray(c.temperature)||c.temperature.length<2||c.temperature.length>16) return 'Use 2 to 16 temperature stops';
   if(c.temperature.some((s,i)=>!number(s.value,-60,140)||!color(s.color)||(i&&s.value<=c.temperature[i-1].value))) return 'Temperature stops must have ordered values and valid colors';
   if(!Array.isArray(c.conditions)||c.conditions.length!==7||!c.conditions.every(color)) return 'Seven valid condition colors are required';
-  if(typeof c.wet!=='boolean'||typeof c.night!=='boolean') return 'Invalid treatment toggle';
+  if(typeof c.wet!=='boolean') return 'Invalid treatment toggle';
   if(!number(c.dayBrightness,0,100)||!number(c.nightBrightness,0,100)) return 'Brightness must be 0 to 100%';
   for(const name of ['breathing','wind','lightning']) {
     const a=c.animations?.[name];
@@ -121,8 +121,7 @@ export function render(config,forecast,time=0) {
     if(channel==='conditions'){
       const bucket=conditionBucket(e[1]);
       if(bucket){color=rgb(config.conditions[bucket-1]);
-        if(config.wet&&bucket>=5&&e[3]>=1&&e[3]<=10)color=wetColor(color,e[3]);
-        if(config.night&&e[2]===1)color=blend(scale(color,115/255),0x0f1946,50/255);}
+        if(config.wet&&bucket>=5&&e[3]>=1&&e[3]<=10)color=wetColor(color,e[3]);}
     }
     color=animate(color,config,hours,h,led,channel,time);
     frame[led]=scale(color,config[hours[0]?.[2]===1?'nightBrightness':'dayBrightness']/100);
