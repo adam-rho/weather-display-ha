@@ -183,9 +183,9 @@ inline uint32_t animate(uint32_t color, JsonVariantConst config, JsonArrayConst 
     int wb = e[4] | 0;
     bool windy = wb >= 1 && wb <= 8 ? thresholds[wb] >= a["threshold"].as<int>() : e[1] == 5 || e[1] == 6;
     if (windy && a["enabled"] == true && (a["target"] == "both" || a["target"] == channelId)) {
-        double d = wb >= 3 ? std::fmin(1.0,(wb-3)/5.0) : .5;
+        // Cutoff, not a ramp: any hour at or above the threshold shimmers with the same amplitude.
         double n = 128+noise(led*1.25,time*a["speed"].as<double>()/1024)*80;
-        double mul = std::fmax(30,std::fmin(255,140+(n-128)*3*(1+2*d)))/255;
+        double mul = std::fmax(30,std::fmin(255,140+(n-128)*6))/255;
         color = scale(color,1+(mul-1)*a["strength"].as<double>()/100);
     }
     a = config["animations"]["lightning"];

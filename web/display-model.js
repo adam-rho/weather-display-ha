@@ -105,8 +105,9 @@ function animate(color,config,hours,h,led,channel,time) {
   a=config.animations.wind;
   const wb=e[4]||0,windy=wb>=1&&wb<=8?[0,0,5,10,15,20,30,40,50][wb]>=a.threshold:[5,6].includes(e[1]);
   if(windy&&a.enabled&&(a.target==='both'||a.target===channel)){
-    const d=wb>=3?Math.min(1,(wb-3)/5):.5,n=128+noise(led*1.25,time*a.speed/1024)*80;
-    const mul=Math.max(30,Math.min(255,140+(n-128)*3*(1+2*d)))/255;
+    // Cutoff, not a ramp: any hour at or above the threshold shimmers with the same amplitude.
+    const n=128+noise(led*1.25,time*a.speed/1024)*80;
+    const mul=Math.max(30,Math.min(255,140+(n-128)*6))/255;
     color=scale(color,1+(mul-1)*a.strength/100);
   }
   a=config.animations.lightning;
