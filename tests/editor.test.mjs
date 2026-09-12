@@ -9,8 +9,8 @@ import { join } from 'node:path';
 test('preview follows physical row assignments and ordered temperature colors', () => {
   const config = defaults();
   const forecast = {h: Array.from({length:24}, (_, h) => [4,h===0?8:1,0,0,0,h===0?0:90])};
-  assert.equal(render(config,forecast,0)[47], 0x2D60C8);
-  assert.equal(render(config,forecast,0)[24], 0xCD2E39);
+  assert.equal(render(config,forecast,0)[47], 0x0000FF);
+  assert.equal(render(config,forecast,0)[24], 0xCF0000);
   config.top='conditions'; config.bottom='off';
   const frame=render(config,forecast,0);
   assert.equal(frame[47],0x43C47E);

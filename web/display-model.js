@@ -1,6 +1,6 @@
 export const names=['Sunny','Partly cloudy','Cloudy','Fog','Rain','Snow','Sleet'];
 export const stops=[0,20,32,50,65,78,90];
-export const colors=['#2D60C8','#5B8DEF','#74C7E8','#F2D36B','#F0974A','#E85D5D','#CD2E39'];
+export const colors=['#0000FF','#5B8DEF','#74C7E8','#F2D36B','#F0974A','#EF0000','#CF0000'];
 export const hex=c=>'#'+(c>>>0).toString(16).padStart(6,'0').toUpperCase();
 const rgb=c=>parseInt(c.slice(1),16);
 const byte=v=>Math.round(Math.max(0,Math.min(255,v)));

@@ -12,7 +12,7 @@ int main() {
         hour.add(0); hour.add(0); hour.add(h == 0 ? 0 : 90);
     }
     auto frame = device.render(forecast, 0);
-    assert(frame[47] == 0x2D60C8 && frame[24] == 0xCD2E39);
+    assert(frame[47] == 0x0000FF && frame[24] == 0xCF0000);
     assert(frame[0] == 0x43C47E && frame[23] == 0xFFD34E);
     JsonDocument command;
     command["id"] = "first";

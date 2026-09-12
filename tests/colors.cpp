@@ -12,8 +12,8 @@ int main(int argc, char**) {
         return 0;
     }
     for (int i = 0; i < 7; ++i) assert(temperature(TEMP_STOPS[i]) == TEMP_PALETTE[i+1]);
-    assert(temperature(-100) == 0x2D60C8);
-    assert(temperature(150) == 0xCD2E39);
+    assert(temperature(-100) == 0x0000FF);
+    assert(temperature(150) == 0xCF0000);
     assert(temperature(NAN) == 0);
     assert(temperature(60) != temperature(61));
     // Independent OKLCH reference used by Android's ColorStopScaleTest.
