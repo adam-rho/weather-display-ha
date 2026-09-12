@@ -163,3 +163,50 @@ test('wall preview palette does not follow the theme',async({page})=>{
   await lightTheme(page);
   expect(await paint()).toEqual(dark);
 });
+
+// ---- finding 3: apply lockout ----
+
+// Apply with the device silent, at a 50ms confirmation timeout instead of 10s.
+const applyUnconfirmed=async page=>{
+  await page.evaluate(()=>{document.querySelector('edgelight-display-card').confirmTimeoutMs=50;
+    window.noAck=true;window.refresh();});
+  await page.getByLabel('Top edge assignment').selectOption('conditions');
+  await page.getByRole('button',{name:'Apply changes',exact:true}).click();
+  await expect(page.getByText('Unconfirmed. Check the display connection, then retry.')).toBeVisible();
+};
+
+test('apply timeout re-enables editing and keeps the draft',async({page})=>{
+  await page.goto('/');
+  await applyUnconfirmed(page);
+  await expect(page.getByLabel('Top edge assignment')).toHaveValue('conditions');
+  await expect(page.getByLabel('Top edge assignment')).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Restore defaults'})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Apply changes',exact:true})).toBeEnabled();
+  await page.getByRole('button',{name:'Colors',exact:true}).click();
+  await expect(page.getByLabel('Rain hex',{exact:true})).toBeEnabled();
+});
+
+test('after a timeout Apply follows online state while editing stays open',async({page})=>{
+  await page.goto('/');
+  await applyUnconfirmed(page);
+  const apply=page.getByRole('button',{name:'Apply changes',exact:true});
+  await page.evaluate(()=>{window.deviceOnline=false;window.refresh();});
+  await expect(apply).toBeDisabled();
+  await expect(page.getByLabel('Top edge assignment')).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Restore defaults'})).toBeEnabled();
+  await page.evaluate(()=>{window.deviceOnline=true;window.refresh();});
+  await expect(apply).toBeEnabled();
+});
+
+test('retry after timeout reuses the request id only for an unchanged draft',async({page})=>{
+  await page.goto('/');
+  await applyUnconfirmed(page);
+  await page.getByRole('button',{name:'Apply changes',exact:true}).click();
+  await expect(page.getByText('Unconfirmed. Check the display connection, then retry.')).toBeVisible();
+  await page.getByLabel('Bottom edge assignment').selectOption('off');
+  await page.getByRole('button',{name:'Apply changes',exact:true}).click();
+  const sent=await page.evaluate(()=>window.sent.map(c=>c.id));
+  expect(sent).toHaveLength(3);
+  expect(sent[1]).toBe(sent[0]); // unchanged draft: same request, same id
+  expect(sent[2]).not.toBe(sent[0]); // edited draft: a new request
+});

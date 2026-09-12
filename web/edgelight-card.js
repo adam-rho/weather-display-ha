@@ -2,6 +2,7 @@ import {LitElement,html,nothing} from './vendor/lit-core.min.js';
 import {defaults,render,validate,hex,glow,names,wetColor,sample,conditionBucket} from './display-model.js';
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clone=o=>structuredClone(o);
+const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const get=(o,path)=>path.split('.').reduce((v,k)=>v?.[k],o);
 const set=(o,path,value)=>{const keys=path.split('.'),last=keys.pop();keys.reduce((v,k)=>v[k],o)[last]=value;};
 const labels={temperature:'Temperature',conditions:'Conditions',off:'Off',both:'Both'};
@@ -12,7 +13,7 @@ export class EdgelightDisplayCard extends LitElement {
   constructor(){super();this.accepted=null;this.draft=defaults();this.dirty=false;
     this.mode='live';this.edge='top';this.section='assignments';this.hour=0;this.guide=false;this.night='forecast';
     this.playing=!matchMedia('(prefers-reduced-motion: reduce)').matches;this.time=0;this.message='Waiting for display';this.units='F';
-    this.pending=null;this.conflict=false;}
+    this.pending=null;this.unconfirmed=null;this.conflict=false;this.confirmTimeoutMs=10000;}
   createRenderRoot(){return this.attachShadow({mode:'open'});}
   setConfig(config){this.config={configuration_entity:'sensor.edgelight_configuration',availability_entity:'binary_sensor.edgelight_connected',forecast_entity:'sensor.weather_display_hourly',result_entity:'sensor.edgelight_command_result',...config};this.requestUpdate();}
   getCardSize(){return 12;}
@@ -25,12 +26,14 @@ export class EdgelightDisplayCard extends LitElement {
       const confirmed=this.pending&&state.requestId===this.pending.id;
       if(confirmed){clearTimeout(this.timeout);this.pending=null;this.dirty=false;this.message='Applied to display';this.conflict=false;}
       else if(changed&&this.dirty){this.conflict=true;this.message='Settings changed elsewhere. Reload before applying.';}
+      if(confirmed||changed)this.unconfirmed=null;
       this.accepted=clone(state);
       if(!this.dirty)this.draft=clone(state.config);
     }
     const result=hass.states[this.config?.result_entity]?.attributes;
-    if(this.pending&&result?.id===this.pending.id&&result.status==='rejected'){
-      clearTimeout(this.timeout);this.pending=null;this.message=result.error||'Display rejected settings';
+    const sent=this.pending||this.unconfirmed;
+    if(sent&&result?.id===sent.id&&result.status==='rejected'){
+      clearTimeout(this.timeout);this.pending=null;this.unconfirmed=null;this.message=result.error||'Display rejected settings';
     }
     this.requestUpdate();
   }
@@ -52,9 +55,16 @@ export class EdgelightDisplayCard extends LitElement {
   edit(path,value){set(this.draft,path,value);this.dirty=true;this.message='Unsaved changes';this.requestUpdate();}
   async apply(){
     if(!this.online||!this.accepted||this.conflict||validate(this.draft))return;
-    if(!this.pending)this.pending={id:requestId(),expectedRevision:this.accepted.revision,config:clone(this.draft)};
+    if(!this.pending){
+      // A request that timed out may still be in flight: reuse its id when the draft is
+      // untouched since, so the device can ignore the duplicate. An edited draft is a new request.
+      const retry=this.unconfirmed&&this.unconfirmed.expectedRevision===this.accepted.revision&&same(this.unconfirmed.config,this.draft);
+      this.pending={id:retry?this.unconfirmed.id:requestId(),expectedRevision:this.accepted.revision,config:clone(this.draft)};
+    }
     this.message='Waiting for display confirmation';this.requestUpdate();
-    clearTimeout(this.timeout);this.timeout=setTimeout(()=>{this.message='Unconfirmed. Check the display connection, then retry.';this.requestUpdate();},10000);
+    clearTimeout(this.timeout);
+    this.timeout=setTimeout(()=>{this.unconfirmed=this.pending;this.pending=null;
+      this.message='Unconfirmed. Check the display connection, then retry.';this.requestUpdate();},this.confirmTimeoutMs);
     try{await this._hass.callService('script','edgelight_apply',{command:this.pending});}
     catch{clearTimeout(this.timeout);this.message='Could not send settings. Retry when connected.';this.requestUpdate();}
   }
@@ -94,7 +104,7 @@ export class EdgelightDisplayCard extends LitElement {
       <div class="preview-tools"><button id="play" @click=${()=>{this.playing=!this.playing;this.requestUpdate();}}>${this.playing?'Pause animations':'Play animations'}</button><label class="toggle">LED guide<input id="guide" type="checkbox" .checked=${this.guide} @change=${e=>{this.guide=e.target.checked;this.requestUpdate();}}></label>${this.mode==='sample'?html`<label>Sample lighting<select id="night" .value=${this.night} @change=${e=>{this.night=e.target.value;this.requestUpdate();}}><option value="forecast">Day and night</option><option value="day">All day</option><option value="night">All night</option></select></label>`:nothing}</div>
       <label class="hour-picker">Inspect forecast hour<input id="hour" type="range" min="0" max="23" .value=${String(this.hour)} aria-label="Forecast hour" @input=${e=>{this.hour=Number(e.target.value);this.requestUpdate();}}></label><div class="details" id="details"></div><p class="forecast-status" id="forecast-status"></p>
       </div><div class="editor"><nav>${[['assignments','Edges'],['colors','Colors'],['animations','Animations'],['brightness','Brightness']].map(([id,title])=>html`<button data-section=${id} aria-pressed=${this.section===id} @click=${()=>{this.section=id;this.requestUpdate();}}>${title}</button>`)}</nav><div class="controls">${this.controls()}</div></div></div>
-      <footer><div><span id="status" role="status">${status}</span><span id="validation">${error}</span></div><div class="actions"><button id="defaults" ?disabled=${!!this.pending} @click=${()=>{this.draft=defaults();this.dirty=true;this.message='Unsaved changes';this.requestUpdate();}}>Restore defaults</button><button id="discard" @click=${()=>{clearTimeout(this.timeout);this.pending=null;this.conflict=false;this.dirty=false;this.draft=clone(this.accepted?.config||defaults());this.message='Changes discarded';this.requestUpdate();}}>${this.conflict?'Reload settings':'Discard changes'}</button><button class="primary" id="apply" ?disabled=${applyDisabled} @click=${()=>this.apply()}>${this.pending?'Retry apply':'Apply changes'}</button></div></footer></article>`;
+      <footer><div><span id="status" role="status">${status}</span><span id="validation">${error}</span></div><div class="actions"><button id="defaults" ?disabled=${!!this.pending} @click=${()=>{this.draft=defaults();this.dirty=true;this.message='Unsaved changes';this.requestUpdate();}}>Restore defaults</button><button id="discard" @click=${()=>{clearTimeout(this.timeout);this.pending=null;this.unconfirmed=null;this.conflict=false;this.dirty=false;this.draft=clone(this.accepted?.config||defaults());this.message='Changes discarded';this.requestUpdate();}}>${this.conflict?'Reload settings':'Discard changes'}</button><button class="primary" id="apply" ?disabled=${applyDisabled} @click=${()=>this.apply()}>${this.pending?'Retry apply':'Apply changes'}</button></div></footer></article>`;
   }
   sources(row){return Array.from({length:24},(_,h)=>{const led=row===0?47-h:h;
     return html`<span class="source ${this.hour===h?'inspected':''}" data-hour=${h} data-led=${led} @click=${e=>{e.stopPropagation();this.hour=h;this.requestUpdate();}}><i>${led}</i></span>`;});}
