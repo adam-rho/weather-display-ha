@@ -296,3 +296,55 @@ test('hass push with a configured entity change re-renders once',async({page})=>
   expect(m.renders).toBe(1);
   expect(m.stored).toBe(true);
 });
+
+// ---- finding 6: frame loop ----
+
+const previewWind=async page=>{
+  await page.getByRole('button',{name:'Animations',exact:true}).click();
+  await page.getByRole('button',{name:'Preview wind',exact:true}).click();
+};
+
+test('details and forecast status are stable across frames while playing',async({page})=>{
+  await page.goto('/');
+  await previewWind(page);
+  const m=await page.evaluate(async()=>{
+    const sr=document.querySelector('edgelight-display-card').shadowRoot;
+    const details=sr.querySelector('#details'),status=sr.querySelector('#forecast-status');
+    const first=details.firstElementChild;
+    const snap=()=>details.textContent+' | '+status.textContent;
+    const texts=[snap()];let sameNode=true;
+    for(let i=0;i<10;i++){await new Promise(requestAnimationFrame);
+      texts.push(snap());if(details.firstElementChild!==first)sameNode=false;}
+    return {texts,sameNode,hadChild:!!first};});
+  expect(m.hadChild).toBe(true);
+  expect(m.sameNode).toBe(true);
+  expect([...new Set(m.texts)]).toHaveLength(1);
+});
+
+test('glow updates per frame only while playing',async({page})=>{
+  await page.goto('/');
+  await previewWind(page);
+  const playing=await bottomFrames(page,10);
+  expect(playing.some(f=>f!==playing[0])).toBe(true);
+  await page.getByRole('button',{name:'Pause animations',exact:true}).click();
+  const paused=await bottomFrames(page,10);
+  expect(paused.every(f=>f===paused[0])).toBe(true);
+});
+
+test('details update when the inspected hour changes',async({page})=>{
+  await page.goto('/');
+  await previewWind(page);
+  const before=await page.evaluate(async()=>{const card=document.querySelector('edgelight-display-card');
+    await card.updateComplete;
+    return card.shadowRoot.querySelector('#details .eyebrow').textContent;});
+  // No animation frame runs between the input event and updateComplete, so this is
+  // strictly "within one update cycle", not "by the next paint".
+  const after=await page.evaluate(async()=>{
+    const card=document.querySelector('edgelight-display-card');
+    const hour=card.shadowRoot.getElementById('hour');
+    hour.value='2';hour.dispatchEvent(new Event('input'));
+    await card.updateComplete;
+    return card.shadowRoot.querySelector('#details .eyebrow').textContent;});
+  expect(before).not.toBe('');
+  expect(after).not.toBe(before);
+});
