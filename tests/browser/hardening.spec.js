@@ -265,3 +265,34 @@ test('invalid stop order shows the error while the preview keeps painting the la
   const frames=await bottomFrames(page,10);
   expect(frames.some(f=>f!==frames[0])).toBe(true);
 });
+
+// ---- finding 5: hass gating ----
+
+// Count Lit updates by wrapping performUpdate on the instance, then push a hass object
+// that reuses every configured entity's state object except the one named.
+const pushHass=(page,changedEntity)=>page.evaluate(async changedEntity=>{
+  const card=document.querySelector('edgelight-display-card');
+  await card.updateComplete;
+  let renders=0;const inner=card.performUpdate.bind(card);
+  card.performUpdate=()=>{renders++;return inner();};
+  const previous=card.hass;
+  const states={...previous.states,'sensor.unrelated_thing':{state:String(Math.random())}};
+  if(changedEntity)states[changedEntity]={...previous.states[changedEntity]};
+  const next={...previous,states};
+  card.hass=next;
+  await card.updateComplete;
+  return {renders,stored:card.hass===next};},changedEntity);
+
+test('hass push with only unrelated entity changes does not re-render',async({page})=>{
+  await page.goto('/');
+  const m=await pushHass(page,null);
+  expect(m.renders).toBe(0);
+  expect(m.stored).toBe(true);
+});
+
+test('hass push with a configured entity change re-renders once',async({page})=>{
+  await page.goto('/');
+  const m=await pushHass(page,'sensor.edgelight_configuration');
+  expect(m.renders).toBe(1);
+  expect(m.stored).toBe(true);
+});

@@ -19,7 +19,12 @@ export class EdgelightDisplayCard extends LitElement {
   getCardSize(){return 12;}
   getGridOptions(){return {columns:'full',min_columns:6};}
   set hass(hass){
+    const previous=this._hass;
     this._hass=hass;
+    // HA pushes a new hass object on every state change in the house. Only these four
+    // entities can change what the card shows, so nothing else is worth a render.
+    if(previous&&['configuration_entity','availability_entity','forecast_entity','result_entity']
+      .every(key=>previous.states[this.config?.[key]]===hass.states[this.config?.[key]]))return;
     const state=hass.states[this.config?.configuration_entity]?.attributes;
     if(state?.config&&!validate(state.config)&&Number.isInteger(state.revision)){
       const changed=this.accepted&&state.revision!==this.accepted.revision;
