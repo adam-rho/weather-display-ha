@@ -1,6 +1,18 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Edgelight display editor</title>
 <style>body{margin:0;padding:28px;background:#151819;color:#eee;font-family:system-ui}main{max-width:1250px;margin:auto}nav{padding:0 0 24px;color:#abb2b4}nav b{color:#f0974a;margin-left:30px}</style>
+<!--
+  MANUAL, OWNER-VERIFIED CHECK — forecast-hour slider drag (SPEC bug 4, Open Decision 4).
+  Synthetic mouse events do not drive a native range thumb in headless Chromium, so this
+  one anti-fragility check is manual. To verify:
+    1. Open this page. Grab the "Inspect forecast hour" slider thumb and start dragging.
+    2. While holding the drag, wait for or trigger a state update — in devtools console run
+       `window.refresh()` (the harness also refreshes ~every real HA push).
+    3. Keep dragging. The thumb must keep tracking the pointer and the inspected hour must
+       keep changing; the drag must NOT snap back or release. (On the old innerHTML card the
+       drag aborted the instant an update landed.)
+  The same is true of the day/night brightness sliders. Owner-verified at deploy.
+-->
 <main><nav>Desktop dashboard <b>Edgelight</b></nav><edgelight-display-card></edgelight-display-card></main>
 <script type="module">
 import './edgelight-card.js';
