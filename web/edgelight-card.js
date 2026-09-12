@@ -1,7 +1,7 @@
 import {LitElement,html,nothing} from './vendor/lit-core.min.js';
 import {defaults,render,validate,hex,glow,names,wetColor,sample,conditionBucket} from './display-model.js';
-const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clone=o=>structuredClone(o);
+const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const get=(o,path)=>path.split('.').reduce((v,k)=>v?.[k],o);
 const set=(o,path,value)=>{const keys=path.split('.'),last=keys.pop();keys.reduce((v,k)=>v[k],o)[last]=value;};
 const labels={temperature:'Temperature',conditions:'Conditions',off:'Off',both:'Both'};
@@ -12,33 +12,45 @@ export class EdgelightDisplayCard extends LitElement {
   constructor(){super();this.accepted=null;this.draft=defaults();this.dirty=false;
     this.mode='live';this.edge='top';this.section='assignments';this.hour=0;this.guide=false;this.night='forecast';
     this.playing=!matchMedia('(prefers-reduced-motion: reduce)').matches;this.time=0;this.message='Waiting for display';this.units='F';
-    this.pending=null;this.conflict=false;}
+    this.pending=null;this.unconfirmed=null;this.conflict=false;this.confirmTimeoutMs=10000;}
   createRenderRoot(){return this.attachShadow({mode:'open'});}
   setConfig(config){this.config={configuration_entity:'sensor.edgelight_configuration',availability_entity:'binary_sensor.edgelight_connected',forecast_entity:'sensor.weather_display_hourly',result_entity:'sensor.edgelight_command_result',...config};this.requestUpdate();}
   getCardSize(){return 12;}
   getGridOptions(){return {columns:'full',min_columns:6};}
   set hass(hass){
+    const previous=this._hass;
     this._hass=hass;
+    // HA pushes a new hass object on every state change in the house. Only these four
+    // entities can change what the card shows, so nothing else is worth a render.
+    if(previous&&['configuration_entity','availability_entity','forecast_entity','result_entity']
+      .every(key=>previous.states[this.config?.[key]]===hass.states[this.config?.[key]]))return;
     const state=hass.states[this.config?.configuration_entity]?.attributes;
     if(state?.config&&!validate(state.config)&&Number.isInteger(state.revision)){
       const changed=this.accepted&&state.revision!==this.accepted.revision;
       const confirmed=this.pending&&state.requestId===this.pending.id;
       if(confirmed){clearTimeout(this.timeout);this.pending=null;this.dirty=false;this.message='Applied to display';this.conflict=false;}
       else if(changed&&this.dirty){this.conflict=true;this.message='Settings changed elsewhere. Reload before applying.';}
+      if(confirmed||changed)this.unconfirmed=null;
       this.accepted=clone(state);
       if(!this.dirty)this.draft=clone(state.config);
     }
     const result=hass.states[this.config?.result_entity]?.attributes;
-    if(this.pending&&result?.id===this.pending.id&&result.status==='rejected'){
-      clearTimeout(this.timeout);this.pending=null;this.message=result.error||'Display rejected settings';
+    const sent=this.pending||this.unconfirmed;
+    if(sent&&result?.id===sent.id&&result.status==='rejected'){
+      clearTimeout(this.timeout);this.pending=null;this.unconfirmed=null;this.message=result.error||'Display rejected settings';
     }
     this.requestUpdate();
   }
   get hass(){return this._hass;}
-  connectedCallback(){super.connectedCallback();this.start();}
-  disconnectedCallback(){super.disconnectedCallback();cancelAnimationFrame(this.animation);clearTimeout(this.timeout);}
+  connectedCallback(){super.connectedCallback();this.start();this.clock=setInterval(()=>this.requestUpdate(),60000);}
+  willUpdate(){this.error=validate(this.draft);if(!this.error)this.lastValid=clone(this.draft);}
+  updated(){
+    if(this.painted!==this.section){this.painted=this.section;const controls=this.renderRoot.querySelector('.controls');if(controls)controls.scrollTop=0;}
+    this.paint();
+  }
+  disconnectedCallback(){super.disconnectedCallback();cancelAnimationFrame(this.animation);clearTimeout(this.timeout);clearInterval(this.clock);}
   start(){cancelAnimationFrame(this.animation);let last=performance.now();
-    const tick=now=>{if(this.playing)this.time+=now-last;last=now;this.paint();this.animation=requestAnimationFrame(tick);};
+    const tick=now=>{if(this.playing){this.time+=now-last;this.paint();}last=now;this.animation=requestAnimationFrame(tick);};
     this.animation=requestAnimationFrame(tick);
   }
   get online(){return this._hass?.states[this.config?.availability_entity]?.state==='on';}
@@ -49,9 +61,16 @@ export class EdgelightDisplayCard extends LitElement {
   edit(path,value){set(this.draft,path,value);this.dirty=true;this.message='Unsaved changes';this.requestUpdate();}
   async apply(){
     if(!this.online||!this.accepted||this.conflict||validate(this.draft))return;
-    if(!this.pending)this.pending={id:requestId(),expectedRevision:this.accepted.revision,config:clone(this.draft)};
+    if(!this.pending){
+      // A request that timed out may still be in flight: reuse its id when the draft is
+      // untouched since, so the device can ignore the duplicate. An edited draft is a new request.
+      const retry=this.unconfirmed&&this.unconfirmed.expectedRevision===this.accepted.revision&&same(this.unconfirmed.config,this.draft);
+      this.pending={id:retry?this.unconfirmed.id:requestId(),expectedRevision:this.accepted.revision,config:clone(this.draft)};
+    }
     this.message='Waiting for display confirmation';this.requestUpdate();
-    clearTimeout(this.timeout);this.timeout=setTimeout(()=>{this.message='Unconfirmed. Check the display connection, then retry.';this.requestUpdate();},10000);
+    clearTimeout(this.timeout);
+    this.timeout=setTimeout(()=>{this.unconfirmed=this.pending;this.pending=null;
+      this.message='Unconfirmed. Check the display connection, then retry.';this.requestUpdate();},this.confirmTimeoutMs);
     try{await this._hass.callService('script','edgelight_apply',{command:this.pending});}
     catch{clearTimeout(this.timeout);this.message='Could not send settings. Retry when connected.';this.requestUpdate();}
   }
@@ -67,7 +86,8 @@ export class EdgelightDisplayCard extends LitElement {
   color(path,title){const busy=!!this.pending,value=get(this.draft,path);
     return html`<label class="color-row"><span>${title}</span><input type="color" data-path=${path} aria-label="${title} picker" .value=${value} ?disabled=${busy}
         @input=${e=>this.edit(path,e.target.value)}><input class="hex" data-path=${path} aria-label="${title} hex" .value=${value} maxlength="7" spellcheck="false" ?disabled=${busy}
-        @input=${e=>this.edit(path,e.target.value)}></label>`;}
+        @input=${e=>{if(/^#[0-9a-f]{6}$/i.test(e.target.value))this.edit(path,e.target.value);}}
+        @change=${e=>{e.target.value=String(get(this.draft,path)).toUpperCase();}}></label>`;}
   controls(){
     const c=this.draft,busy=!!this.pending;
     if(this.section==='assignments')return html`<h3>Choose what each edge shows</h3><p>Each light is one forecast hour. Both edges read from left to right.</p>${['top','bottom'].map(row=>this.select(row,`${row==='top'?'Top':'Bottom'} edge assignment`,Object.entries(labels).filter(([v])=>v!=='both')))}<div class="hint">${this.edge==='top'?'Top: LED 47 at the left, LED 24 at the right.':'Bottom: LED 0 at the left, LED 23 at the right.'}</div>`;
@@ -81,40 +101,47 @@ export class EdgelightDisplayCard extends LitElement {
   selectEdge(edge){this.edge=edge;this.section='assignments';this.requestUpdate();}
   render(){
     if(!this.config)return html``;
-    const error=validate(this.draft);
+    const error=this.error;
     const status=this.message==='Waiting for display'&&this.accepted?'Display settings loaded':this.message;
     const applyDisabled=!this.online||!this.accepted||!!error||!!this.conflict||(!this.dirty&&!this.pending);
+    const f=this.forecast();
     return html`<link rel="stylesheet" href=${new URL('./edgelight.css',import.meta.url)}><article>
       <header><div><span class="eyebrow">YOUR WALL, AT A GLANCE</span><h2>Edgelight</h2></div><span class="connection ${this.online?'online':''}">${this.online?'Display online':'Display offline'}</span></header>
       <div class="workspace"><div class="visual"><div class="modes"><button data-mode="live" aria-pressed=${this.mode==='live'} @click=${()=>{this.mode='live';this.requestUpdate();}}>Live forecast</button><button data-mode="sample" aria-pressed=${this.mode==='sample'} @click=${()=>{this.mode='sample';this.requestUpdate();}}>Sample forecast</button></div>
       <div class="scene"><button class="edge-label top-label" data-edge="top" @click=${()=>this.selectEdge('top')}>Top · ${labels[this.draft.top]}</button><div class="wall ${this.guide?'guide':''}"><div class="edge top ${this.edge==='top'?'selected':''}" data-edge="top" role="button" tabindex="0" aria-label="Select top edge" @click=${()=>this.selectEdge('top')} @keydown=${e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();this.selectEdge('top');}}}>${this.sources(0)}</div><div class="bar"></div><div class="edge bottom ${this.edge==='bottom'?'selected':''}" data-edge="bottom" role="button" tabindex="0" aria-label="Select bottom edge" @click=${()=>this.selectEdge('bottom')} @keydown=${e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();this.selectEdge('bottom');}}}>${this.sources(1)}</div></div><button class="edge-label bottom-label" data-edge="bottom" @click=${()=>this.selectEdge('bottom')}>Bottom · ${labels[this.draft.bottom]}</button><div class="timeline"><span>Now</span><span>+6h</span><span>+12h</span><span>+18h</span><span>+23h</span></div></div>
       <div class="preview-tools"><button id="play" @click=${()=>{this.playing=!this.playing;this.requestUpdate();}}>${this.playing?'Pause animations':'Play animations'}</button><label class="toggle">LED guide<input id="guide" type="checkbox" .checked=${this.guide} @change=${e=>{this.guide=e.target.checked;this.requestUpdate();}}></label>${this.mode==='sample'?html`<label>Sample lighting<select id="night" .value=${this.night} @change=${e=>{this.night=e.target.value;this.requestUpdate();}}><option value="forecast">Day and night</option><option value="day">All day</option><option value="night">All night</option></select></label>`:nothing}</div>
-      <label class="hour-picker">Inspect forecast hour<input id="hour" type="range" min="0" max="23" .value=${String(this.hour)} aria-label="Forecast hour" @input=${e=>{this.hour=Number(e.target.value);this.requestUpdate();}}></label><div class="details" id="details"></div><p class="forecast-status" id="forecast-status"></p>
+      <label class="hour-picker">Inspect forecast hour<input id="hour" type="range" min="0" max="23" .value=${String(this.hour)} aria-label="Forecast hour" @input=${e=>{this.hour=Number(e.target.value);this.requestUpdate();}}></label>${this.details(f)}<p class="forecast-status" id="forecast-status">${this.forecastStatus(f)}</p>
       </div><div class="editor"><nav>${[['assignments','Edges'],['colors','Colors'],['animations','Animations'],['brightness','Brightness']].map(([id,title])=>html`<button data-section=${id} aria-pressed=${this.section===id} @click=${()=>{this.section=id;this.requestUpdate();}}>${title}</button>`)}</nav><div class="controls">${this.controls()}</div></div></div>
-      <footer><div><span id="status" role="status">${status}</span><span id="validation">${error}</span></div><div class="actions"><button id="defaults" ?disabled=${!!this.pending} @click=${()=>{this.draft=defaults();this.dirty=true;this.message='Unsaved changes';this.requestUpdate();}}>Restore defaults</button><button id="discard" @click=${()=>{clearTimeout(this.timeout);this.pending=null;this.conflict=false;this.dirty=false;this.draft=clone(this.accepted?.config||defaults());this.message='Changes discarded';this.requestUpdate();}}>${this.conflict?'Reload settings':'Discard changes'}</button><button class="primary" id="apply" ?disabled=${applyDisabled} @click=${()=>this.apply()}>${this.pending?'Retry apply':'Apply changes'}</button></div></footer></article>`;
+      <footer><div><span id="status" role="status">${status}</span><span id="validation">${error}</span></div><div class="actions"><button id="defaults" ?disabled=${!!this.pending} @click=${()=>{this.draft=defaults();this.dirty=true;this.message='Unsaved changes';this.requestUpdate();}}>Restore defaults</button><button id="discard" @click=${()=>{clearTimeout(this.timeout);this.pending=null;this.unconfirmed=null;this.conflict=false;this.dirty=false;this.draft=clone(this.accepted?.config||defaults());this.message='Changes discarded';this.requestUpdate();}}>${this.conflict?'Reload settings':'Discard changes'}</button><button class="primary" id="apply" ?disabled=${applyDisabled} @click=${()=>this.apply()}>${this.pending?'Retry apply':'Apply changes'}</button></div></footer></article>`;
   }
   sources(row){return Array.from({length:24},(_,h)=>{const led=row===0?47-h:h;
     return html`<span class="source ${this.hour===h?'inspected':''}" data-hour=${h} data-led=${led} @click=${e=>{e.stopPropagation();this.hour=h;this.requestUpdate();}}><i>${led}</i></span>`;});}
-  paint(){const root=this.renderRoot;if(!root?.querySelector('.wall')||validate(this.draft))return;
-    const f=this.forecast(),frame=render(this.draft,f,this.time);
-    const bright=clone(this.draft);bright.dayBrightness=100;bright.nightBrightness=100;
-    const lit=render(bright,f,this.time);
-    const alpha=(f.h?.[0]?.[2]===1?this.draft.nightBrightness:this.draft.dayBrightness)/100;
-    root.querySelectorAll('.source').forEach(el=>{const g=glow(lit[Number(el.dataset.led)]);el.style.setProperty('--glow',hex(g.color));el.style.setProperty('--glow-alpha',alpha*g.intensity);});
-    const e=f.h?.[this.hour],legacy=e&&e.length<6;
+  // Rendered by Lit, from a snapshot of this.time taken at the last update: the hex
+  // readout does not shimmer per frame while animations play.
+  details(f){const c=this.lastValid,e=f.h?.[this.hour];
+    if(!c||!e)return html`<div class="details" id="details">No forecast received yet</div>`;
+    const frame=render(c,f,this.time),legacy=e.length<6;
     const timestamp=f.times?.[this.hour], date=timestamp?new Date(timestamp):null;
     const when=date&&!Number.isNaN(date.valueOf())?date.toLocaleString(undefined,{weekday:'short',hour:'numeric',minute:'2-digit'}):`Hour ${this.hour}`;
-    const a=this.draft.animations,effects=[];
-    const assigned=[this.draft.top,this.draft.bottom];
-    if(e){
-      const wb=e[4]||0, windy=wb>=1&&wb<=8?[0,0,5,10,15,20,30,40,50][wb]>=a.wind.threshold:[5,6].includes(e[1]);
-      if(windy&&a.wind.enabled&&a.wind.strength>0&&assigned.some(c=>c!=='off'&&(a.wind.target==='both'||a.wind.target===c)))effects.push('Wind shimmer');
-      if(e[1]===11&&assigned.includes('conditions')&&a.lightning.enabled&&a.lightning.strength>0)effects.push('Lightning');
-      if(this.hour>0&&e[2]!==f.h[this.hour-1][2]&&assigned.includes('temperature')&&a.breathing.enabled&&a.breathing.strength>0)effects.push('Sunrise/sunset breathing');
-    }
-    root.querySelector('#details').innerHTML=e?`<div><span class="eyebrow">${escape(when)} ${e[2]?'· NIGHT':''}</span><strong>${escape(names[conditionBucket(e[1])-1]||'No condition data')}</strong><small>${effects.join(' · ')||'No active effects'}</small></div><div>${Number.isFinite(e[5])?format(this.units==='F'?e[5]:(e[5]-32)/1.8)+'°'+this.units:legacy?'Bucket '+e[0]:'No temperature data'}<br><small>Top ${hex(frame[47-this.hour])} · Bottom ${hex(frame[this.hour])}</small></div>`:'No forecast received yet';
-    const age=f.generated_at?(Date.now()-Date.parse(f.generated_at))/60000:null;
-    root.querySelector('#forecast-status').textContent=this.mode==='sample'?'Sample forecast · preview only':`Live forecast · ${age===null?'update time unavailable':age>30?'stale · '+Math.floor(age)+' minutes old':'updated '+Math.max(0,Math.floor(age))+' minutes ago'}${legacy?' · legacy temperature buckets':''}`;
+    const a=c.animations,assigned=[c.top,c.bottom],effects=[];
+    const wb=e[4]||0, windy=wb>=1&&wb<=8?[0,0,5,10,15,20,30,40,50][wb]>=a.wind.threshold:[5,6].includes(e[1]);
+    if(windy&&a.wind.enabled&&a.wind.strength>0&&assigned.some(channel=>channel!=='off'&&(a.wind.target==='both'||a.wind.target===channel)))effects.push('Wind shimmer');
+    if(e[1]===11&&assigned.includes('conditions')&&a.lightning.enabled&&a.lightning.strength>0)effects.push('Lightning');
+    if(this.hour>0&&e[2]!==f.h[this.hour-1][2]&&assigned.includes('temperature')&&a.breathing.enabled&&a.breathing.strength>0)effects.push('Sunrise/sunset breathing');
+    return html`<div class="details" id="details"><div><span class="eyebrow">${when} ${e[2]?'· NIGHT':''}</span><strong>${names[conditionBucket(e[1])-1]||'No condition data'}</strong><small>${effects.join(' · ')||'No active effects'}</small></div><div>${Number.isFinite(e[5])?format(this.units==='F'?e[5]:(e[5]-32)/1.8)+'°'+this.units:legacy?'Bucket '+e[0]:'No temperature data'}<br><small>Top ${hex(frame[47-this.hour])} · Bottom ${hex(frame[this.hour])}</small></div></div>`;}
+  // The age re-evaluates on the once-a-minute clock, not on every frame.
+  forecastStatus(f){if(this.mode==='sample')return 'Sample forecast · preview only';
+    const legacy=f.h?.[this.hour]?.length<6, age=f.generated_at?(Date.now()-Date.parse(f.generated_at))/60000:null;
+    return `Live forecast · ${age===null?'update time unavailable':age>30?'stale · '+Math.floor(age)+' minutes old':'updated '+Math.max(0,Math.floor(age))+' minutes ago'}${legacy?' · legacy temperature buckets':''}`;}
+  // Per frame, only the glow custom properties. The full-brightness frame the glow reads
+  // is cloned once per draft change, and not at all when neither brightness is reduced.
+  full(c){if(c.dayBrightness===100&&c.nightBrightness===100)return c;
+    if(this.brightOf!==c){this.brightOf=c;this.bright=clone(c);this.bright.dayBrightness=100;this.bright.nightBrightness=100;}
+    return this.bright;}
+  paint(){const root=this.renderRoot,c=this.lastValid;if(!root?.querySelector('.wall')||!c)return;
+    const f=this.forecast(),lit=render(this.full(c),f,this.time);
+    const alpha=(f.h?.[0]?.[2]===1?c.nightBrightness:c.dayBrightness)/100;
+    root.querySelectorAll('.source').forEach(el=>{const g=glow(lit[Number(el.dataset.led)]);el.style.setProperty('--glow',hex(g.color));el.style.setProperty('--glow-alpha',alpha*g.intensity);});
   }
 }
 customElements.define('edgelight-display-card',EdgelightDisplayCard);
