@@ -38,30 +38,32 @@ edgelight_fake_timelapse:
           max: 10
   variables:
     day:
-      - [3, 4, 1, 2, 2, 33]    # 00 cloudy, 33F
-      - [2, 3, 1, 1, 2, 31]    # 01 partly cloudy, 31F
-      - [2, 2, 1, 1, 1, 29]    # 02 clear night, 29F
-      - [2, 2, 1, 1, 1, 28]    # 03 clear night, 28F
-      - [2, 2, 1, 1, 1, 27]    # 04 clear night, 27F
-      - [2, 7, 1, 2, 1, 27]    # 05 fog, 27F
-      - [2, 7, 1, 2, 1, 28]    # 06 fog, 28F
-      - [3, 1, 0, 1, 2, 32]    # 07 sunny, 32F (sunrise)
-      - [3, 1, 0, 1, 2, 39]    # 08 sunny, 39F
-      - [3, 1, 0, 1, 2, 47]    # 09 sunny, 47F
-      - [4, 1, 0, 1, 2, 55]    # 10 sunny, 55F
-      - [4, 3, 0, 1, 3, 63]    # 11 partly cloudy, 63F, breeze
-      - [5, 1, 0, 1, 3, 71]    # 12 sunny, 71F
-      - [6, 3, 0, 2, 4, 78]    # 13 partly cloudy, 78F, wind building
-      - [6, 4, 0, 4, 5, 84]    # 14 cloudy, 84F, gusty
-      - [6, 11, 0, 8, 6, 81]   # 15 thunderstorm, 81F, heavy, windy
-      - [5, 11, 0, 9, 7, 72]   # 16 thunderstorm, 72F, heavy, very windy
-      - [5, 8, 0, 7, 5, 66]    # 17 rain, 66F, medium
-      - [4, 8, 0, 5, 4, 64]    # 18 rain, 64F, medium
-      - [4, 3, 0, 2, 3, 63]    # 19 partly cloudy, 63F (sunset)
-      - [4, 2, 1, 1, 2, 57]    # 20 clear night, 57F
-      - [4, 2, 1, 1, 2, 51]    # 21 clear night, 51F
-      - [3, 3, 1, 1, 2, 45]    # 22 partly cloudy, 45F
-      - [3, 4, 1, 2, 2, 39]    # 23 cloudy, 39F
+      # Temperatures are met.no's real Boulder-area hourly forecast for
+      # 2026-09-12/13 (local clock hour); conditions are layered on to suit.
+      - [4, 3, 1, 1, 2, 54]    # 00 partly cloudy
+      - [4, 3, 1, 1, 2, 54]    # 01 partly cloudy
+      - [4, 2, 1, 1, 2, 54]    # 02 clear night
+      - [4, 2, 1, 1, 2, 53]    # 03 clear night
+      - [4, 7, 1, 2, 1, 53]    # 04 fog
+      - [4, 7, 1, 2, 1, 53]    # 05 fog
+      - [4, 4, 1, 2, 2, 52]    # 06 cloudy
+      - [4, 3, 0, 1, 2, 52]    # 07 partly cloudy (sunrise)
+      - [4, 1, 0, 1, 2, 59]    # 08 sunny
+      - [5, 1, 0, 1, 2, 71]    # 09 sunny
+      - [5, 1, 0, 1, 2, 75]    # 10 sunny
+      - [6, 1, 0, 1, 3, 78]    # 11 sunny, breeze
+      - [6, 3, 0, 1, 3, 79]    # 12 partly cloudy
+      - [6, 3, 0, 3, 3, 80]    # 13 partly cloudy, cumulus building
+      - [6, 4, 0, 5, 5, 80]    # 14 cloudy, gust front
+      - [5, 11, 0, 9, 7, 71]   # 15 thunderstorm, outflow drop
+      - [5, 11, 0, 8, 6, 71]   # 16 thunderstorm
+      - [5, 8, 0, 7, 4, 67]    # 17 rain
+      - [4, 8, 0, 6, 4, 59]    # 18 rain
+      - [4, 4, 0, 3, 3, 59]    # 19 cloudy (sunset)
+      - [4, 3, 1, 1, 2, 56]    # 20 partly cloudy
+      - [4, 2, 1, 1, 2, 56]    # 21 clear night
+      - [4, 2, 1, 1, 2, 56]    # 22 clear night
+      - [4, 3, 1, 1, 2, 54]    # 23 partly cloudy
   sequence:
     - action: automation.turn_off
       target:
