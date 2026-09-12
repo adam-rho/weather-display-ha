@@ -44,3 +44,15 @@ test('browser and real firmware renderer agree for edits, effects and legacy dat
     });
   } finally { rmSync(folder,{recursive:true,force:true}); }
 });
+
+test('preview glow keeps hue and expresses dimming as intensity, never as black', async () => {
+  const { glow } = await import('../web/display-model.js');
+  assert.deepEqual(glow(0x000000), {color:0x000000, intensity:0});
+  assert.deepEqual(glow(0xFF0000), {color:0xFF0000, intensity:1});
+  const dim = glow(0x800000);
+  assert.equal(dim.color, 0xFF0000);
+  assert.ok(Math.abs(dim.intensity-128/255)<1e-9);
+  const teal = glow(0x1A6070);
+  assert.equal(teal.color, 0x3BDBFF);
+  assert.ok(Math.abs(teal.intensity-0x70/255)<1e-9);
+});

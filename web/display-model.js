@@ -8,6 +8,9 @@ const pack=a=>(byte(a[0])<<16)|(byte(a[1])<<8)|byte(a[2]);
 const channels=c=>[c>>16&255,c>>8&255,c&255];
 const scale=(c,f)=>pack(channels(c).map(v=>v*f));
 const blend=(c,t,f)=>pack(channels(c).map((v,i)=>v+(channels(t)[i]-v)*f));
+// Preview only: an LED is light, not paint. Split a color into its hue at full drive plus an intensity,
+// so dimming (animations, night blend, off) shows as a fainter glow instead of black on the wall.
+export const glow=c=>{const ch=channels(c),m=Math.max(...ch);return m?{color:pack(ch.map(v=>v*255/m)),intensity:m/255}:{color:0,intensity:0};};
 export const conditionBucket=c=>[0,1,1,2,3,1,3,4,5,6,7,5,0,7][c]||0;
 export function defaults() {
   return {version:1,top:'temperature',bottom:'conditions',

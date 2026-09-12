@@ -1,5 +1,5 @@
 import {LitElement,html,nothing} from './vendor/lit-core.min.js';
-import {defaults,render,validate,hex,names,wetColor,sample,conditionBucket} from './display-model.js';
+import {defaults,render,validate,hex,glow,names,wetColor,sample,conditionBucket} from './display-model.js';
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clone=o=>structuredClone(o);
 const get=(o,path)=>path.split('.').reduce((v,k)=>v?.[k],o);
@@ -98,9 +98,9 @@ export class EdgelightDisplayCard extends LitElement {
   paint(){const root=this.renderRoot;if(!root?.querySelector('.wall')||validate(this.draft))return;
     const f=this.forecast(),frame=render(this.draft,f,this.time);
     const bright=clone(this.draft);bright.dayBrightness=100;bright.nightBrightness=100;
-    const glow=render(bright,f,this.time);
+    const lit=render(bright,f,this.time);
     const alpha=(f.h?.[0]?.[2]===1?this.draft.nightBrightness:this.draft.dayBrightness)/100;
-    root.querySelectorAll('.source').forEach(el=>{el.style.setProperty('--glow',hex(glow[Number(el.dataset.led)]));el.style.setProperty('--glow-alpha',alpha);});
+    root.querySelectorAll('.source').forEach(el=>{const g=glow(lit[Number(el.dataset.led)]);el.style.setProperty('--glow',hex(g.color));el.style.setProperty('--glow-alpha',alpha*g.intensity);});
     const e=f.h?.[this.hour],legacy=e&&e.length<6;
     const timestamp=f.times?.[this.hour], date=timestamp?new Date(timestamp):null;
     const when=date&&!Number.isNaN(date.valueOf())?date.toLocaleString(undefined,{weekday:'short',hour:'numeric',minute:'2-digit'}):`Hour ${this.hour}`;
