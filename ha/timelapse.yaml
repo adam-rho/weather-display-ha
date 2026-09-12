@@ -1,0 +1,91 @@
+# Append to scripts.yaml. Fakes a 24h timelapse on the wall: publishes a
+# rotated 24-hour window to weather/hourly every hold_seconds so the whole
+# strip shifts one LED left per frame. Pauses the 15-minute publisher while
+# running, then restores the real forecast. Firmware needs no change.
+#
+# Row format matches weather_display_publish.py:
+#   [temp_bucket, cond_code, is_night, precip_bucket, wind_bucket, temperature_f]
+# Hour index = local clock hour. Night flag 20:00-06:59 to match the publisher.
+
+edgelight_fake_timelapse:
+  alias: Edgelight - Fake 24h timelapse
+  description: Walk the wall through a scripted day, one hour per frame, then restore the real forecast.
+  icon: mdi:movie-open-play
+  mode: single
+  fields:
+    hold_seconds:
+      name: Seconds per frame
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 60
+    start_hour:
+      name: Start hour
+      description: Clock hour shown on the leftmost LED in the first frame (0-23).
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 23
+    cycles:
+      name: Cycles
+      description: How many full 24-frame loops to run.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 10
+  variables:
+    day:
+      - [3, 4, 1, 2, 2, 33]    # 00 cloudy, 33F
+      - [2, 3, 1, 1, 2, 31]    # 01 partly cloudy, 31F
+      - [2, 2, 1, 1, 1, 29]    # 02 clear night, 29F
+      - [2, 2, 1, 1, 1, 28]    # 03 clear night, 28F
+      - [2, 2, 1, 1, 1, 27]    # 04 clear night, 27F
+      - [2, 7, 1, 2, 1, 27]    # 05 fog, 27F
+      - [2, 7, 1, 2, 1, 28]    # 06 fog, 28F
+      - [3, 1, 0, 1, 2, 32]    # 07 sunny, 32F (sunrise)
+      - [3, 1, 0, 1, 2, 39]    # 08 sunny, 39F
+      - [3, 1, 0, 1, 2, 47]    # 09 sunny, 47F
+      - [4, 1, 0, 1, 2, 55]    # 10 sunny, 55F
+      - [4, 3, 0, 1, 3, 63]    # 11 partly cloudy, 63F, breeze
+      - [5, 1, 0, 1, 3, 71]    # 12 sunny, 71F
+      - [6, 3, 0, 2, 4, 78]    # 13 partly cloudy, 78F, wind building
+      - [6, 4, 0, 4, 5, 84]    # 14 cloudy, 84F, gusty
+      - [6, 11, 0, 8, 6, 81]   # 15 thunderstorm, 81F, heavy, windy
+      - [5, 11, 0, 9, 7, 72]   # 16 thunderstorm, 72F, heavy, very windy
+      - [5, 8, 0, 7, 5, 66]    # 17 rain, 66F, medium
+      - [4, 8, 0, 5, 4, 64]    # 18 rain, 64F, medium
+      - [4, 3, 0, 2, 3, 63]    # 19 partly cloudy, 63F (sunset)
+      - [4, 2, 1, 1, 2, 57]    # 20 clear night, 57F
+      - [4, 2, 1, 1, 2, 51]    # 21 clear night, 51F
+      - [3, 3, 1, 1, 2, 45]    # 22 partly cloudy, 45F
+      - [3, 4, 1, 2, 2, 39]    # 23 cloudy, 39F
+  sequence:
+    - action: automation.turn_off
+      target:
+        entity_id: automation.weather_display_publish_forecast_every_15_min
+    - repeat:
+        count: "{{ (cycles | default(1) | int) * 24 }}"
+        sequence:
+          - variables:
+              k: "{{ ((start_hour | default(0) | int) + repeat.index - 1) % 24 }}"
+              frame: "{{ day[k:] + day[:k] }}"
+              times: >-
+                {% set ns = namespace(t=[]) %}
+                {% set base = now().replace(minute=0, second=0, microsecond=0) %}
+                {% for i in range(24) %}{% set ns.t = ns.t + [(base + timedelta(hours=i)).isoformat()] %}{% endfor %}
+                {{ ns.t }}
+          - action: mqtt.publish
+            data:
+              topic: weather/hourly
+              payload: "{{ {'h': frame, 'times': times, 'generated_at': now().isoformat(), 'timelapse_hour': k} | to_json }}"
+              qos: 0
+              retain: false
+          - delay:
+              seconds: "{{ hold_seconds | default(5) | int }}"
+    - action: automation.turn_on
+      target:
+        entity_id: automation.weather_display_publish_forecast_every_15_min
+    - action: script.weather_display_update
