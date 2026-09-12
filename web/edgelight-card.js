@@ -39,6 +39,7 @@ export class EdgelightDisplayCard extends LitElement {
   }
   get hass(){return this._hass;}
   connectedCallback(){super.connectedCallback();this.start();}
+  willUpdate(){this.error=validate(this.draft);if(!this.error)this.lastValid=clone(this.draft);}
   updated(){
     if(this.painted!==this.section){this.painted=this.section;const controls=this.renderRoot.querySelector('.controls');if(controls)controls.scrollTop=0;}
   }
@@ -80,7 +81,8 @@ export class EdgelightDisplayCard extends LitElement {
   color(path,title){const busy=!!this.pending,value=get(this.draft,path);
     return html`<label class="color-row"><span>${title}</span><input type="color" data-path=${path} aria-label="${title} picker" .value=${value} ?disabled=${busy}
         @input=${e=>this.edit(path,e.target.value)}><input class="hex" data-path=${path} aria-label="${title} hex" .value=${value} maxlength="7" spellcheck="false" ?disabled=${busy}
-        @input=${e=>this.edit(path,e.target.value)}></label>`;}
+        @input=${e=>{if(/^#[0-9a-f]{6}$/i.test(e.target.value))this.edit(path,e.target.value);}}
+        @change=${e=>{e.target.value=String(get(this.draft,path)).toUpperCase();}}></label>`;}
   controls(){
     const c=this.draft,busy=!!this.pending;
     if(this.section==='assignments')return html`<h3>Choose what each edge shows</h3><p>Each light is one forecast hour. Both edges read from left to right.</p>${['top','bottom'].map(row=>this.select(row,`${row==='top'?'Top':'Bottom'} edge assignment`,Object.entries(labels).filter(([v])=>v!=='both')))}<div class="hint">${this.edge==='top'?'Top: LED 47 at the left, LED 24 at the right.':'Bottom: LED 0 at the left, LED 23 at the right.'}</div>`;
@@ -94,7 +96,7 @@ export class EdgelightDisplayCard extends LitElement {
   selectEdge(edge){this.edge=edge;this.section='assignments';this.requestUpdate();}
   render(){
     if(!this.config)return html``;
-    const error=validate(this.draft);
+    const error=this.error;
     const status=this.message==='Waiting for display'&&this.accepted?'Display settings loaded':this.message;
     const applyDisabled=!this.online||!this.accepted||!!error||!!this.conflict||(!this.dirty&&!this.pending);
     return html`<link rel="stylesheet" href=${new URL('./edgelight.css',import.meta.url)}><article>
@@ -108,17 +110,17 @@ export class EdgelightDisplayCard extends LitElement {
   }
   sources(row){return Array.from({length:24},(_,h)=>{const led=row===0?47-h:h;
     return html`<span class="source ${this.hour===h?'inspected':''}" data-hour=${h} data-led=${led} @click=${e=>{e.stopPropagation();this.hour=h;this.requestUpdate();}}><i>${led}</i></span>`;});}
-  paint(){const root=this.renderRoot;if(!root?.querySelector('.wall')||validate(this.draft))return;
-    const f=this.forecast(),frame=render(this.draft,f,this.time);
-    const bright=clone(this.draft);bright.dayBrightness=100;bright.nightBrightness=100;
+  paint(){const root=this.renderRoot,c=this.lastValid;if(!root?.querySelector('.wall')||!c)return;
+    const f=this.forecast(),frame=render(c,f,this.time);
+    const bright=clone(c);bright.dayBrightness=100;bright.nightBrightness=100;
     const lit=render(bright,f,this.time);
-    const alpha=(f.h?.[0]?.[2]===1?this.draft.nightBrightness:this.draft.dayBrightness)/100;
+    const alpha=(f.h?.[0]?.[2]===1?c.nightBrightness:c.dayBrightness)/100;
     root.querySelectorAll('.source').forEach(el=>{const g=glow(lit[Number(el.dataset.led)]);el.style.setProperty('--glow',hex(g.color));el.style.setProperty('--glow-alpha',alpha*g.intensity);});
     const e=f.h?.[this.hour],legacy=e&&e.length<6;
     const timestamp=f.times?.[this.hour], date=timestamp?new Date(timestamp):null;
     const when=date&&!Number.isNaN(date.valueOf())?date.toLocaleString(undefined,{weekday:'short',hour:'numeric',minute:'2-digit'}):`Hour ${this.hour}`;
-    const a=this.draft.animations,effects=[];
-    const assigned=[this.draft.top,this.draft.bottom];
+    const a=c.animations,effects=[];
+    const assigned=[c.top,c.bottom];
     if(e){
       const wb=e[4]||0, windy=wb>=1&&wb<=8?[0,0,5,10,15,20,30,40,50][wb]>=a.wind.threshold:[5,6].includes(e[1]);
       if(windy&&a.wind.enabled&&a.wind.strength>0&&assigned.some(c=>c!=='off'&&(a.wind.target==='both'||a.wind.target===c)))effects.push('Wind shimmer');

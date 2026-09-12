@@ -210,3 +210,58 @@ test('retry after timeout reuses the request id only for an unchanged draft',asy
   expect(sent[1]).toBe(sent[0]); // unchanged draft: same request, same id
   expect(sent[2]).not.toBe(sent[0]); // edited draft: a new request
 });
+
+// ---- finding 4: hex input and invalid drafts ----
+
+// Sample hours 5-7 carry condition code 8 (rain), so bottom-edge LED 5 is painted from
+// the Rain color and, with no wind or lightning at that hour, holds still between frames.
+const rainGlow=page=>page.evaluate(()=>document.querySelector('edgelight-display-card')
+  .shadowRoot.querySelector('.bottom .source[data-led="5"]').style.getPropertyValue('--glow'));
+const rainDraft=page=>page.evaluate(()=>document.querySelector('edgelight-display-card').draft.conditions[4]);
+// Snapshot every bottom-edge LED once per animation frame.
+const bottomFrames=(page,count)=>page.evaluate(async count=>{
+  const sr=document.querySelector('edgelight-display-card').shadowRoot;
+  const leds=[...sr.querySelectorAll('.bottom .source')];
+  const snap=()=>leds.map(el=>el.style.getPropertyValue('--glow')+'/'+el.style.getPropertyValue('--glow-alpha')).join();
+  const out=[snap()];
+  for(let i=0;i<count;i++){await new Promise(requestAnimationFrame);out.push(snap());}
+  return out;},count);
+
+test('partial hex input does not commit, error, or freeze the preview',async({page})=>{
+  await page.goto('/');
+  await page.getByRole('button',{name:'Colors',exact:true}).click();
+  const before=await rainGlow(page);
+  await page.getByLabel('Rain hex',{exact:true}).fill('#FF');
+  await bottomFrames(page,2);
+  expect(await rainDraft(page)).toBe('#43C47E');
+  await expect(page.getByLabel('Rain picker',{exact:true})).toHaveValue('#43c47e');
+  await expect(page.locator('#validation')).toHaveText('');
+  expect(await rainGlow(page)).toBe(before);
+  await page.getByLabel('Rain hex',{exact:true}).blur();
+  await expect(page.getByLabel('Rain hex',{exact:true})).toHaveValue('#43C47E');
+});
+
+test('complete hex input commits and normalizes on blur',async({page})=>{
+  await page.goto('/');
+  await page.getByRole('button',{name:'Colors',exact:true}).click();
+  const before=await rainGlow(page);
+  await page.getByLabel('Rain hex',{exact:true}).fill('#ff0000');
+  await bottomFrames(page,2);
+  expect((await rainDraft(page)).toUpperCase()).toBe('#FF0000');
+  expect(await rainGlow(page)).not.toBe(before);
+  await page.getByLabel('Rain hex',{exact:true}).blur();
+  await expect(page.getByLabel('Rain hex',{exact:true})).toHaveValue('#FF0000');
+});
+
+test('invalid stop order shows the error while the preview keeps painting the last valid draft',async({page})=>{
+  await page.goto('/');
+  await page.getByRole('button',{name:'Animations',exact:true}).click();
+  await page.getByRole('button',{name:'Preview wind',exact:true}).click();
+  await page.getByRole('button',{name:'Colors',exact:true}).click();
+  await page.getByLabel('Stop 2 temperature').fill('40'); // Stop 3 sits at 32F
+  await page.getByLabel('Stop 2 temperature').blur();
+  await expect(page.locator('#validation')).toHaveText('Temperature stops must have ordered values and valid colors');
+  await expect(page.getByRole('button',{name:'Apply changes',exact:true})).toBeDisabled();
+  const frames=await bottomFrames(page,10);
+  expect(frames.some(f=>f!==frames[0])).toBe(true);
+});
