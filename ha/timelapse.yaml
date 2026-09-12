@@ -4,6 +4,9 @@
 # The 15-minute publisher automation carries a condition that skips while this
 # script is running, so cancelling mid-run leaves nothing to clean up (the next
 # tick, or a manual run of script.weather_display_update, restores the wall).
+# Optional: animations=false disables the device's three effects for the run
+# (via script.edgelight_apply) and re-enables them after. Needs the helper
+# input_boolean.edgelight_timelapse_animations for the dashboard toggle.
 # Firmware needs no change.
 #
 # Row format matches weather_display_publish.py:
@@ -39,6 +42,14 @@ edgelight_fake_timelapse:
         number:
           min: 1
           max: 10
+    animations:
+      name: Wall animations
+      description: >-
+        Keep breathing, wind shimmer and lightning during the loop. When off, the
+        device's three effects are disabled for the run and re-enabled after.
+        Defaults to input_boolean.edgelight_timelapse_animations.
+      selector:
+        boolean:
   variables:
     day:
       # Temperatures are met.no's real Boulder-area hourly forecast for
@@ -69,6 +80,29 @@ edgelight_fake_timelapse:
       - [4, 2, 1, 1, 2, 56]    # 22 clear night
       - [4, 3, 1, 1, 2, 54]    # 23 partly cloudy
   sequence:
+    - variables:
+        keep_effects: >-
+          {{ animations if animations is defined
+             else is_state('input_boolean.edgelight_timelapse_animations', 'on') }}
+        cfg: "{{ state_attr('sensor.edgelight_configuration', 'config') }}"
+        orig_anim: "{{ cfg.animations if cfg is mapping else none }}"
+    - if: "{{ not keep_effects and orig_anim is mapping }}"
+      then:
+        - variables:
+            rev: "{{ state_attr('sensor.edgelight_configuration', 'revision') | int }}"
+        - action: script.edgelight_apply
+          data:
+            command:
+              id: "tl-off-{{ now().strftime('%Y%m%d%H%M%S') }}"
+              expectedRevision: "{{ rev }}"
+              config: >-
+                {{ dict(cfg, animations=dict(orig_anim,
+                     breathing=dict(orig_anim.breathing, enabled=false),
+                     wind=dict(orig_anim.wind, enabled=false),
+                     lightning=dict(orig_anim.lightning, enabled=false))) }}
+        - wait_template: "{{ state_attr('sensor.edgelight_configuration', 'revision') | int > rev }}"
+          timeout: "00:00:10"
+          continue_on_timeout: true
     - repeat:
         count: "{{ (cycles | default(1) | int) * 24 }}"
         sequence:
@@ -88,4 +122,44 @@ edgelight_fake_timelapse:
               retain: false
           - delay:
               seconds: "{{ hold_seconds | default(5) | int }}"
+    - if: "{{ not keep_effects and orig_anim is mapping }}"
+      then:
+        - variables:
+            rev: "{{ state_attr('sensor.edgelight_configuration', 'revision') | int }}"
+        - action: script.edgelight_apply
+          data:
+            command:
+              id: "tl-on-{{ now().strftime('%Y%m%d%H%M%S') }}"
+              expectedRevision: "{{ rev }}"
+              config: "{{ dict(state_attr('sensor.edgelight_configuration', 'config'), animations=orig_anim) }}"
+        - wait_template: "{{ state_attr('sensor.edgelight_configuration', 'revision') | int > rev }}"
+          timeout: "00:00:10"
+          continue_on_timeout: true
+    - action: script.weather_display_update
+
+edgelight_timelapse_restore:
+  alias: Edgelight - Restore wall after timelapse
+  description: Re-enable any disabled wall effects and republish the real forecast. Safe to run any time.
+  icon: mdi:restore
+  mode: single
+  sequence:
+    - variables:
+        cfg: "{{ state_attr('sensor.edgelight_configuration', 'config') }}"
+        an: "{{ cfg.animations if cfg is mapping else none }}"
+        rev: "{{ state_attr('sensor.edgelight_configuration', 'revision') | int(0) }}"
+    - if: "{{ an is mapping and not (an.breathing.enabled and an.wind.enabled and an.lightning.enabled) }}"
+      then:
+        - action: script.edgelight_apply
+          data:
+            command:
+              id: "tl-restore-{{ now().strftime('%Y%m%d%H%M%S') }}"
+              expectedRevision: "{{ rev }}"
+              config: >-
+                {{ dict(cfg, animations=dict(an,
+                     breathing=dict(an.breathing, enabled=true),
+                     wind=dict(an.wind, enabled=true),
+                     lightning=dict(an.lightning, enabled=true))) }}
+        - wait_template: "{{ state_attr('sensor.edgelight_configuration', 'revision') | int > rev }}"
+          timeout: "00:00:10"
+          continue_on_timeout: true
     - action: script.weather_display_update
