@@ -1,7 +1,10 @@
 # Append to scripts.yaml. Fakes a 24h timelapse on the wall: publishes a
 # rotated 24-hour window to weather/hourly every hold_seconds so the whole
-# strip shifts one LED left per frame. Pauses the 15-minute publisher while
-# running, then restores the real forecast. Firmware needs no change.
+# strip shifts one LED left per frame, then restores the real forecast.
+# The 15-minute publisher automation carries a condition that skips while this
+# script is running, so cancelling mid-run leaves nothing to clean up (the next
+# tick, or a manual run of script.weather_display_update, restores the wall).
+# Firmware needs no change.
 #
 # Row format matches weather_display_publish.py:
 #   [temp_bucket, cond_code, is_night, precip_bucket, wind_bucket, temperature_f]
@@ -39,15 +42,16 @@ edgelight_fake_timelapse:
   variables:
     day:
       # Temperatures are met.no's real Boulder-area hourly forecast for
-      # 2026-09-12/13 (local clock hour); conditions are layered on to suit.
+      # 2026-09-12/13 (local clock hour) with a pre-dawn cold pocket (02-07)
+      # pushed down so two hours reach the blue end; conditions layered to suit.
       - [4, 3, 1, 1, 2, 54]    # 00 partly cloudy
       - [4, 3, 1, 1, 2, 54]    # 01 partly cloudy
-      - [4, 2, 1, 1, 2, 54]    # 02 clear night
-      - [4, 2, 1, 1, 2, 53]    # 03 clear night
-      - [4, 7, 1, 2, 1, 53]    # 04 fog
-      - [4, 7, 1, 2, 1, 53]    # 05 fog
-      - [4, 4, 1, 2, 2, 52]    # 06 cloudy
-      - [4, 3, 0, 1, 2, 52]    # 07 partly cloudy (sunrise)
+      - [3, 2, 1, 1, 2, 47]    # 02 clear night, radiative cooling
+      - [3, 2, 1, 1, 2, 41]    # 03 clear night
+      - [3, 7, 1, 2, 1, 34]    # 04 fog, cold pocket (blue)
+      - [2, 7, 1, 2, 1, 31]    # 05 fog, coldest hour (blue)
+      - [3, 4, 1, 2, 2, 39]    # 06 cloudy
+      - [3, 3, 0, 1, 2, 48]    # 07 partly cloudy (sunrise)
       - [4, 1, 0, 1, 2, 59]    # 08 sunny
       - [5, 1, 0, 1, 2, 71]    # 09 sunny
       - [5, 1, 0, 1, 2, 75]    # 10 sunny
@@ -65,9 +69,6 @@ edgelight_fake_timelapse:
       - [4, 2, 1, 1, 2, 56]    # 22 clear night
       - [4, 3, 1, 1, 2, 54]    # 23 partly cloudy
   sequence:
-    - action: automation.turn_off
-      target:
-        entity_id: automation.weather_display_publish_forecast_every_15_min
     - repeat:
         count: "{{ (cycles | default(1) | int) * 24 }}"
         sequence:
@@ -87,7 +88,4 @@ edgelight_fake_timelapse:
               retain: false
           - delay:
               seconds: "{{ hold_seconds | default(5) | int }}"
-    - action: automation.turn_on
-      target:
-        entity_id: automation.weather_display_publish_forecast_every_15_min
     - action: script.weather_display_update
