@@ -36,6 +36,9 @@ export class EdgelightDisplayCard extends LitElement {
   }
   get hass(){return this._hass;}
   connectedCallback(){super.connectedCallback();this.start();}
+  updated(){
+    if(this.painted!==this.section){this.painted=this.section;const controls=this.renderRoot.querySelector('.controls');if(controls)controls.scrollTop=0;}
+  }
   disconnectedCallback(){super.disconnectedCallback();cancelAnimationFrame(this.animation);clearTimeout(this.timeout);}
   start(){cancelAnimationFrame(this.animation);let last=performance.now();
     const tick=now=>{if(this.playing)this.time+=now-last;last=now;this.paint();this.animation=requestAnimationFrame(tick);};
