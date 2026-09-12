@@ -55,9 +55,9 @@ export class EdgelightDisplayCard extends LitElement {
     try{await this._hass.callService('script','edgelight_apply',{command:this.pending});}
     catch{clearTimeout(this.timeout);this.message='Could not send settings. Retry when connected.';this.requestUpdate();}
   }
-  select(path,title,options){const busy=!!this.pending;
-    return html`<label>${title}<select data-path=${path} aria-label=${title} .value=${String(get(this.draft,path))} ?disabled=${busy}
-      @change=${e=>this.edit(path,path.endsWith('threshold')?Number(e.target.value):e.target.value)}>${options.map(([v,t])=>html`<option value=${v}>${t}</option>`)}</select></label>`;}
+  select(path,title,options){const busy=!!this.pending,current=String(get(this.draft,path));
+    return html`<label>${title}<select data-path=${path} aria-label=${title} ?disabled=${busy}
+      @change=${e=>this.edit(path,path.endsWith('threshold')?Number(e.target.value):e.target.value)}>${options.map(([v,t])=>html`<option value=${v} ?selected=${String(v)===current}>${t}</option>`)}</select></label>`;}
   toggle(path,title){const busy=!!this.pending;
     return html`<label class="toggle"><span>${title}</span><input type="checkbox" data-path=${path} aria-label=${title} .checked=${!!get(this.draft,path)} ?disabled=${busy}
       @change=${e=>this.edit(path,e.target.checked)}></label>`;}

@@ -43,6 +43,17 @@ test('offline display cannot apply; unconfirmed requests preserve their ID on re
   await expect(page.getByText('Applied to display',{exact:true})).toHaveCount(0);
 });
 
+test('selects reflect draft values that are not the first option',async({page})=>{
+  await page.goto('/');
+  // Default draft.bottom is 'conditions' (second option), not the first ('temperature').
+  await expect(page.getByLabel('Bottom edge assignment')).toHaveValue('conditions');
+  await page.getByRole('button',{name:'Animations',exact:true}).click();
+  // Default wind threshold is 10 mph (second option), not the first (5 mph).
+  await expect(page.getByLabel('Wind starts at')).toHaveValue('10');
+  // Wind target default is 'conditions' (second option).
+  await expect(page.getByLabel('Wind effect on')).toHaveValue('conditions');
+});
+
 test('mobile layout keeps all 48 lights, horizontal bar, and keyboard controls',async({page})=>{
   await page.setViewportSize({width:390,height:844});await page.goto('/');
   await expect(page.locator('.source')).toHaveCount(48);
