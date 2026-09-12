@@ -99,3 +99,67 @@ test('stacked layout keys off card width, not window width',async({page})=>{
   expect(m.pageScroll).toBeGreaterThan(m.innerHeight);  // the page scrolls, not the panes
   expect(m.scrollHeight).toBe(m.clientHeight);          // controls grow instead of scrolling
 });
+
+// ---- finding 2: theme derivation ----
+
+// Chromium serializes color-mix() results as color(srgb ...), plain colors as rgb()/rgba().
+const channels=s=>{
+  let m=s.match(/^color\(srgb\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)/);
+  if(m)return [+m[1],+m[2],+m[3]];
+  m=s.match(/^rgba?\(([^)]+)\)/);
+  if(m){const p=m[1].split(/[\s,/]+/).filter(Boolean).map(Number);return [p[0]/255,p[1]/255,p[2]/255];}
+  throw new Error('unparsed color: '+s);
+};
+const luminance=s=>{const [r,g,b]=channels(s).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);
+  return .2126*r+.7152*g+.0722*b;};
+
+// HA's default light theme sets --card-background-color, never --ha-card-background.
+const lightTheme=page=>page.evaluate(()=>{const c=document.querySelector('edgelight-display-card');
+  c.style.setProperty('--card-background-color','#fff');
+  c.style.setProperty('--primary-text-color','#141414');
+  c.style.setProperty('--secondary-text-color','#727272');});
+
+const probe=page=>page.evaluate(()=>{
+  const sr=document.querySelector('edgelight-display-card').shadowRoot;
+  const colorOf=sel=>getComputedStyle(sr.querySelector(sel)).color;
+  return {surface:getComputedStyle(sr.querySelector('article')).backgroundColor,
+    text:{article:colorOf('article'),label:colorOf('.controls label'),hex:colorOf('.hex'),footer:colorOf('footer')},
+    borders:[...sr.querySelectorAll('button,select')].map(el=>getComputedStyle(el).borderTopColor)};
+});
+
+test('card is readable in HA light theme',async({page})=>{
+  await page.goto('/');
+  await page.getByRole('button',{name:'Colors',exact:true}).click();
+  await lightTheme(page);
+  const m=await probe(page);
+  const surface=luminance(m.surface);
+  expect(surface).toBeGreaterThan(.8);
+  for(const [name,color] of Object.entries(m.text))
+    expect(luminance(color),`${name} text`).toBeLessThan(.25);
+  expect(m.borders.length).toBeGreaterThan(0);
+  for(const border of m.borders)
+    expect(Math.abs(luminance(border)-surface),`border ${border}`).toBeGreaterThanOrEqual(.05);
+});
+
+// The default (no theme variables) case. "Text" here is the card's primary text,
+// var(--text); secondary text (var(--muted), labels and the footer) is deliberately
+// dimmer and is covered by the light-theme criterion above.
+test('card is readable in dark theme by default',async({page})=>{
+  await page.goto('/');
+  await page.getByRole('button',{name:'Colors',exact:true}).click();
+  const m=await probe(page);
+  expect(luminance(m.surface)).toBeLessThan(.25);
+  expect(luminance(m.text.article)).toBeGreaterThan(.7);
+  expect(luminance(m.text.hex)).toBeGreaterThan(.7);
+});
+
+test('wall preview palette does not follow the theme',async({page})=>{
+  await page.goto('/');
+  const paint=()=>page.evaluate(()=>{
+    const sr=document.querySelector('edgelight-display-card').shadowRoot;
+    return ['.wall','.bar'].map(sel=>{const s=getComputedStyle(sr.querySelector(sel));
+      return s.backgroundColor+' | '+s.backgroundImage;});});
+  const dark=await paint();
+  await lightTheme(page);
+  expect(await paint()).toEqual(dark);
+});
