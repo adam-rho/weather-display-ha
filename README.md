@@ -32,7 +32,9 @@ check; these defaults use the same RGB values as the app.
 - Home Assistant with the **Mosquitto broker** add-on (or any MQTT broker HA
   is connected to)
 - A weather entity that supports hourly forecasts. The built-in met.no entity
-  (`weather.forecast_home`) works out of the box.
+  (`weather.forecast_home`) works out of the box. Add an NWS entity too and the
+  card's **Forecast source** picker switches the wall between them; the switch
+  republishes immediately.
 - An ESP32 dev board (`esp32dev` in `platformio.ini`; change `board` for other
   modules)
 - A 48-LED WS2812B / SK6812 strip, mounted as two rows of 24 (see Layout)
@@ -48,7 +50,7 @@ Everything HA needs is in `ha/`:
 | File | Where it goes |
 |------|---------------|
 | `ha/python_scripts/weather_display_publish.py` | `/config/python_scripts/` (create the folder if needed) |
-| `ha/scripts.yaml` | Append to your `scripts.yaml`. Change `weather.forecast_home` to your weather entity. |
+| `ha/scripts.yaml` | Append to your `scripts.yaml`. Change `weather.forecast_home` and `weather.nws_home` to your met.no and NWS entities. |
 | `ha/automations.yaml` | Append to your `automations.yaml`. |
 | `ha/configuration.yaml` | Add `python_script:` to `configuration.yaml`. The `mqtt: sensor:` block is optional. |
 

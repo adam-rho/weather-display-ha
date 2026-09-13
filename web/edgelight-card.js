@@ -14,15 +14,15 @@ export class EdgelightDisplayCard extends LitElement {
     this.playing=!matchMedia('(prefers-reduced-motion: reduce)').matches;this.time=0;this.message='Waiting for display';this.units='F';
     this.pending=null;this.unconfirmed=null;this.conflict=false;this.confirmTimeoutMs=10000;}
   createRenderRoot(){return this.attachShadow({mode:'open'});}
-  setConfig(config){this.config={configuration_entity:'sensor.edgelight_configuration',availability_entity:'binary_sensor.edgelight_connected',forecast_entity:'sensor.weather_display_hourly',result_entity:'sensor.edgelight_command_result',...config};this.requestUpdate();}
+  setConfig(config){this.config={configuration_entity:'sensor.edgelight_configuration',availability_entity:'binary_sensor.edgelight_connected',forecast_entity:'sensor.weather_display_hourly',result_entity:'sensor.edgelight_command_result',source_entity:'input_select.edgelight_weather_source',...config};this.requestUpdate();}
   getCardSize(){return 12;}
   getGridOptions(){return {columns:'full',min_columns:6};}
   set hass(hass){
     const previous=this._hass;
     this._hass=hass;
-    // HA pushes a new hass object on every state change in the house. Only these four
+    // HA pushes a new hass object on every state change in the house. Only these five
     // entities can change what the card shows, so nothing else is worth a render.
-    if(previous&&['configuration_entity','availability_entity','forecast_entity','result_entity']
+    if(previous&&['configuration_entity','availability_entity','forecast_entity','result_entity','source_entity']
       .every(key=>previous.states[this.config?.[key]]===hass.states[this.config?.[key]]))return;
     const state=hass.states[this.config?.configuration_entity]?.attributes;
     if(state?.config&&!validate(state.config)&&Number.isInteger(state.revision)){
@@ -54,6 +54,11 @@ export class EdgelightDisplayCard extends LitElement {
     this.animation=requestAnimationFrame(tick);
   }
   get online(){return this._hass?.states[this.config?.availability_entity]?.state==='on';}
+  // The forecast source lives in an input_select helper the publisher script reads. The
+  // picker only appears when that helper exists, so installs without it lose nothing.
+  get source(){return this._hass?.states[this.config?.source_entity];}
+  sourcePicker(){const s=this.source,options=s?.attributes?.options;if(!Array.isArray(options)||!options.length)return nothing;
+    return html`<label>Forecast source<select id="source" .value=${s.state} @change=${e=>this._hass.callService('input_select','select_option',{entity_id:this.config.source_entity,option:e.target.value})}>${options.map(o=>html`<option value=${o} ?selected=${o===s.state}>${o}</option>`)}</select></label>`;}
   forecast(){const f=this.mode==='sample'?sample():clone(this._hass?.states[this.config?.forecast_entity]?.attributes||{h:[]});
     if(this.mode==='sample'&&this.night!=='forecast')for(const h of f.h)h[2]=this.night==='night'?1:0;
     return f;
@@ -109,7 +114,7 @@ export class EdgelightDisplayCard extends LitElement {
       <header><div><span class="eyebrow">YOUR WALL, AT A GLANCE</span><h2>Edgelight</h2></div><span class="connection ${this.online?'online':''}">${this.online?'Display online':'Display offline'}</span></header>
       <div class="workspace"><div class="visual"><div class="modes"><button data-mode="live" aria-pressed=${this.mode==='live'} @click=${()=>{this.mode='live';this.requestUpdate();}}>Live forecast</button><button data-mode="sample" aria-pressed=${this.mode==='sample'} @click=${()=>{this.mode='sample';this.requestUpdate();}}>Sample forecast</button></div>
       <div class="scene"><button class="edge-label top-label" data-edge="top" @click=${()=>this.selectEdge('top')}>Top · ${labels[this.draft.top]}</button><div class="wall ${this.guide?'guide':''}"><div class="edge top ${this.edge==='top'?'selected':''}" data-edge="top" role="button" tabindex="0" aria-label="Select top edge" @click=${()=>this.selectEdge('top')} @keydown=${e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();this.selectEdge('top');}}}>${this.sources(0)}</div><div class="bar"></div><div class="edge bottom ${this.edge==='bottom'?'selected':''}" data-edge="bottom" role="button" tabindex="0" aria-label="Select bottom edge" @click=${()=>this.selectEdge('bottom')} @keydown=${e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();this.selectEdge('bottom');}}}>${this.sources(1)}</div></div><button class="edge-label bottom-label" data-edge="bottom" @click=${()=>this.selectEdge('bottom')}>Bottom · ${labels[this.draft.bottom]}</button><div class="timeline"><span>Now</span><span>+6h</span><span>+12h</span><span>+18h</span><span>+23h</span></div></div>
-      <div class="preview-tools"><button id="play" @click=${()=>{this.playing=!this.playing;this.requestUpdate();}}>${this.playing?'Pause animations':'Play animations'}</button><label class="toggle">LED guide<input id="guide" type="checkbox" .checked=${this.guide} @change=${e=>{this.guide=e.target.checked;this.requestUpdate();}}></label>${this.mode==='sample'?html`<label>Sample lighting<select id="night" .value=${this.night} @change=${e=>{this.night=e.target.value;this.requestUpdate();}}><option value="forecast">Day and night</option><option value="day">All day</option><option value="night">All night</option></select></label>`:nothing}</div>
+      <div class="preview-tools"><button id="play" @click=${()=>{this.playing=!this.playing;this.requestUpdate();}}>${this.playing?'Pause animations':'Play animations'}</button><label class="toggle">LED guide<input id="guide" type="checkbox" .checked=${this.guide} @change=${e=>{this.guide=e.target.checked;this.requestUpdate();}}></label>${this.mode==='live'?this.sourcePicker():nothing}${this.mode==='sample'?html`<label>Sample lighting<select id="night" .value=${this.night} @change=${e=>{this.night=e.target.value;this.requestUpdate();}}><option value="forecast">Day and night</option><option value="day">All day</option><option value="night">All night</option></select></label>`:nothing}</div>
       <label class="hour-picker">Inspect forecast hour<input id="hour" type="range" min="0" max="23" .value=${String(this.hour)} aria-label="Forecast hour" @input=${e=>{this.hour=Number(e.target.value);this.requestUpdate();}}></label>${this.details(f)}<p class="forecast-status" id="forecast-status">${this.forecastStatus(f)}</p>
       </div><div class="editor"><nav>${[['assignments','Edges'],['colors','Colors'],['animations','Animations'],['brightness','Brightness']].map(([id,title])=>html`<button data-section=${id} aria-pressed=${this.section===id} @click=${()=>{this.section=id;this.requestUpdate();}}>${title}</button>`)}</nav><div class="controls">${this.controls()}</div></div></div>
       <footer><div><span id="status" role="status">${status}</span><span id="validation">${error}</span></div><div class="actions"><button id="defaults" ?disabled=${!!this.pending} @click=${()=>{this.draft=defaults();this.dirty=true;this.message='Unsaved changes';this.requestUpdate();}}>Restore defaults</button><button id="discard" @click=${()=>{clearTimeout(this.timeout);this.pending=null;this.unconfirmed=null;this.conflict=false;this.dirty=false;this.draft=clone(this.accepted?.config||defaults());this.message='Changes discarded';this.requestUpdate();}}>${this.conflict?'Reload settings':'Discard changes'}</button><button class="primary" id="apply" ?disabled=${applyDisabled} @click=${()=>this.apply()}>${this.pending?'Retry apply':'Apply changes'}</button></div></footer></article>`;
@@ -132,7 +137,8 @@ export class EdgelightDisplayCard extends LitElement {
   // The age re-evaluates on the once-a-minute clock, not on every frame.
   forecastStatus(f){if(this.mode==='sample')return 'Sample forecast · preview only';
     const legacy=f.h?.[this.hour]?.length<6, age=f.generated_at?(Date.now()-Date.parse(f.generated_at))/60000:null;
-    return `Live forecast · ${age===null?'update time unavailable':age>30?'stale · '+Math.floor(age)+' minutes old':'updated '+Math.max(0,Math.floor(age))+' minutes ago'}${legacy?' · legacy temperature buckets':''}`;}
+    const picked=this.source?.state, source=f.source?` · ${f.source}`:'', switching=picked&&f.source&&picked!==f.source?` · switching to ${picked}`:'';
+    return `Live forecast${source} · ${age===null?'update time unavailable':age>30?'stale · '+Math.floor(age)+' minutes old':'updated '+Math.max(0,Math.floor(age))+' minutes ago'}${switching}${legacy?' · legacy temperature buckets':''}`;}
   // Per frame, only the glow custom properties. The full-brightness frame the glow reads
   // is cloned once per draft change, and not at all when neither brightness is reduced.
   full(c){if(c.dayBrightness===100&&c.nightBrightness===100)return c;

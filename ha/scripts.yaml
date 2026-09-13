@@ -1,21 +1,29 @@
 # Add these to your scripts.yaml (or paste into Settings > Automations & Scenes
-# > Scripts > YAML mode). Replace weather.forecast_home with your weather entity.
-# It must support hourly forecasts (the built-in met.no entity does).
+# > Scripts > YAML mode). Replace the two weather entities below with yours.
+# Both must support hourly forecasts (the built-in met.no entity and the NWS
+# integration both do). The source is picked by
+# input_select.edgelight_weather_source (defined in ha/display-editor.yaml);
+# anything other than "NWS" falls back to met.no, so a missing helper is safe.
 
 weather_display_update:
   alias: Weather Display - Publish Forecast
   description: Publish the next 24 forecast hours to MQTT (weather/hourly) for the ESP32 display
   mode: single
+  variables:
+    source: "{{ states('input_select.edgelight_weather_source') }}"
+    weather_entity: >-
+      {{ 'weather.nws_home' if source == 'NWS' else 'weather.forecast_home' }}
   sequence:
     - action: weather.get_forecasts
       data:
-        entity_id: weather.forecast_home
+        entity_id: "{{ weather_entity }}"
         type: hourly
       response_variable: forecast_response
     - action: python_script.weather_display_publish
       data:
         forecast_data: "{{ forecast_response }}"
         generated_at: "{{ now().isoformat() }}"
+        source: "{{ 'NWS' if source == 'NWS' else 'met.no' }}"
 
 weather_display_demo:
   alias: Weather Display - Demo Mode

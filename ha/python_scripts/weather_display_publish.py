@@ -4,7 +4,10 @@
 # and publishes them. The FastLED firmware owns the palette, so this script
 # never touches RGB values. Raw °F enables continuous temperature colors.
 #
-# Payload: {"h":[[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket, temperature_f], ... 24 entries]}
+# Payload: {"h":[[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket, temperature_f], ... 24 entries],
+#           "times":[...], "generated_at":"...", "source":"met.no"|"NWS"|null}
+# source is whatever the calling script passes (the forecast provider name); the
+# card shows it in the status line. Absent -> null.
 # is_night is 0/1. The firmware applies a brightness dim when set so
 # partlycloudy/cloudy nights don't whitewash the strip.
 #
@@ -279,7 +282,8 @@ else:
                 time_strs.append(json_string(h.get('datetime')))
             payload = ('{"h":[' + ','.join(entry_strs) + '],"times":['
                        + ','.join(time_strs) + '],"generated_at":'
-                       + json_string(data.get('generated_at')) + '}')
+                       + json_string(data.get('generated_at')) + ',"source":'
+                       + json_string(data.get('source')) + '}')
             try:
                 # Ensure the device is in forecast mode every refresh. Retained,
                 # so it also pulls the strip out of demo after a reboot.

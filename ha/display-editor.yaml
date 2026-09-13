@@ -18,6 +18,16 @@ mqtt:
       payload_on: online
       payload_off: offline
 
+# Forecast provider the publisher script reads from. The card's "Forecast source"
+# picker writes this; the publisher automation republishes on change.
+input_select:
+  edgelight_weather_source:
+    name: Edgelight forecast source
+    icon: mdi:weather-cloudy-clock
+    options:
+      - met.no
+      - NWS
+
 script:
   edgelight_apply:
     alias: Edgelight - Apply display settings

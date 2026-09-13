@@ -25,11 +25,14 @@ card.setConfig({});
 let accepted={revision:0,requestId:'',config:defaults()};
 window.deviceOnline=true;
 window.noAck=false;
+window.source='met.no';
 window.refresh=()=>{card.hass={states:{
   'sensor.edgelight_configuration':{state:String(accepted.revision),attributes:accepted},
   'binary_sensor.edgelight_connected':{state:window.deviceOnline?'on':'off'},
-  'sensor.weather_display_hourly':{state:'24',attributes:{...sample(),generated_at:new Date().toISOString()}},
+  'sensor.weather_display_hourly':{state:'24',attributes:{...sample(),generated_at:new Date().toISOString(),source:window.source}},
+  'input_select.edgelight_weather_source':{state:window.source,attributes:{options:['met.no','NWS']}},
 },callService:async(domain,service,data)=>{
+  if(domain==='input_select'){window.source=data.option;setTimeout(window.refresh,100);return;}
   const command=data.command;window.sent.push(command);
   if(window.noAck)return;
   accepted={revision:accepted.revision+1,requestId:command.id,config:command.config};
