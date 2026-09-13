@@ -41,6 +41,29 @@ check; these defaults use the same RGB values as the app.
 - 5V supply for the strip, GND common with the ESP32
 - [PlatformIO](https://platformio.org/) to build and flash
 
+## What this assumes
+
+Everything here runs on a stock Home Assistant OS install, but some choices are
+baked in. Know them before you build:
+
+- **48 LEDs in two rows of 24.** Firmware, dashboard card and preview all
+  assume this shape. A different count means edits in `src/main.cpp`,
+  `include/display_engine.h` and `web/display-model.js`.
+- **Hourly forecasts over `weather.get_forecasts`.** met.no (built in) and NWS
+  are tested. Other integrations work if their condition strings are in
+  `COND_MAP`; unknown strings render off. Units and timestamp offsets are
+  normalized on the HA side.
+- **Night is 20:00-06:59 local**, fixed in the publisher. It only drives the
+  strip's global night brightness and the sunrise/sunset breathing cells.
+- **Fahrenheit and mph** for the palette stops, the legacy buckets and the wind
+  threshold. Temperatures are converted from °C on the HA side; metric users
+  move the color stops in the dashboard tab rather than editing code.
+- **MQTT topics are fixed** under `weather/`. You need a broker HA can reach
+  (the Mosquitto add-on is the easy path) and the `python_script:` integration.
+- **The installer wants SSH.** `scripts/install-ha.py` edits dashboard storage,
+  so it needs the SSH add-on and stops HA core for about 30 seconds. Without
+  SSH, everything it does can be pasted by hand (see step 4).
+
 ## Setup
 
 ### 1. Home Assistant
@@ -82,6 +105,31 @@ firmware blanks the LEDs during an OTA so FastLED isn't fighting the flash.
 The strip shows a slow blue breath on LED 0 until the first MQTT message
 arrives. Once the retained payload lands (a second or two after connecting)
 the full forecast appears.
+
+### 4. Dashboard tab (optional)
+
+A Lovelace card mirrors the wall and edits its settings: edge assignments,
+temperature stops, condition colors, the three animations, day/night
+brightness, and the met.no / NWS source picker. The preview uses the same
+color math as the firmware, so what the card shows is what the strip shows.
+
+```bash
+npm install && npm run build
+python3 scripts/install-ha.py --host root@ha.local --dashboard dashboard_desktop           # dry run
+python3 scripts/install-ha.py --host root@ha.local --dashboard dashboard_desktop --install
+```
+
+`--dashboard` is the storage suffix of the dashboard to add the tab to
+(`/config/.storage/lovelace.<suffix>`). The installer copies the card to
+`/config/www/edgelight/<stamp>/`, registers it as a module resource, adds an
+"Edgelight" panel tab, installs `ha/display-editor.yaml` as a package (MQTT
+sensors, `input_select.edgelight_weather_source`, `script.edgelight_apply`),
+and writes the publisher. It backs up every file it touches.
+
+By hand instead: copy `dist/` to `/config/www/edgelight/`, add
+`/local/edgelight/edgelight-card.js` as a module resource, add a panel view
+with one `custom:edgelight-display-card` card, and include
+`ha/display-editor.yaml` as a package.
 
 ## Layout
 
@@ -160,10 +208,13 @@ the condition enum in `src/main.cpp`. A new condition needs both.
 ```bash
 pio run -e esp32dev
 python3 -m unittest discover -s tests -v
+npm test && npx playwright test
 ```
 
-The tests compile the portable color rules with a host C++ compiler and exercise
-the HA publisher with fake forecast data. No broker or device is contacted.
+The Python tests compile the portable color rules with a host C++ compiler and
+exercise the HA publisher with fake forecast data. The Node and Playwright
+tests drive the card against a fake `hass` and check its preview against the
+real firmware renderer. No broker or device is contacted.
 
 ## Related
 
