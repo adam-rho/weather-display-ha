@@ -84,7 +84,10 @@ def main():
         write(backup+'/'+Path(path).name, content)
     stopped = False
     try:
-        for filename in ['edgelight-card.js','display-model.js','edgelight.css']:
+        # The card imports ./vendor/lit-core.min.js relative to its own URL, so the
+        # vendor file must ship in the same stamp directory.
+        ssh('mkdir -p '+shlex.quote(asset_dir+'/vendor'))
+        for filename in ['edgelight-card.js','display-model.js','edgelight.css','vendor/lit-core.min.js']:
             write(asset_dir+'/'+filename, (ROOT/'dist'/filename).read_bytes())
         write('/config/edgelight-editor.yaml', (ROOT/'ha/display-editor.yaml').read_bytes())
         write('/config/python_scripts/weather_display_publish.py', (ROOT/'ha/python_scripts/weather_display_publish.py').read_bytes())
@@ -104,7 +107,10 @@ def main():
         view=json.loads((ROOT/'ha/display-editor-view.json').read_text())
         existing=next((i for i,v in enumerate(views) if v.get('path')=='edgelight'),None)
         if existing is None: views.append(view)
-        else: views[existing]=view
+        else:
+            # Only the card belongs to this installer. Title, icon, layout type and any other
+            # view-level edits made in the HA UI stay as they are.
+            views[existing]={**views[existing], 'cards':view['cards']}
         items=resources['data']['items']
         item=next((v for v in items if v.get('id')=='edgelight-display-editor'),None)
         if item is None:
