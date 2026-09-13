@@ -13,12 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISHER = ROOT / 'ha/python_scripts/weather_display_publish.py'
 
 
-def publish(hours, **units):
+def publish(hours, clock=None, **units):
     hass = SimpleNamespace(states=Mock(), services=Mock())
     hass.states.get.return_value = SimpleNamespace(attributes=units)
+    clock = clock or (lambda: datetime.datetime(2026, 9, 11, tzinfo=datetime.timezone.utc))
+    # The HA sandbox exposes dt_util but not now(); mirror that.
     context = dict(data={'forecast_data': {'weather.test': {'forecast': hours}}},
-                   hass=hass, logger=Mock(),
-                   now=lambda: datetime.datetime(2026, 9, 11, tzinfo=datetime.timezone.utc))
+                   hass=hass, logger=Mock(), dt_util=SimpleNamespace(now=clock))
     exec(compile(PUBLISHER.read_text(), str(PUBLISHER), 'exec'), context)
     return context, hass.services.call.call_args_list
 
@@ -62,6 +63,20 @@ class PublisherTest(unittest.TestCase):
     def test_empty_forecast_does_not_publish(self):
         _, calls = publish([])
         self.assertEqual([], calls)
+
+    def test_night_band_reads_each_timestamp_in_its_own_offset(self):
+        mountain = datetime.timezone(datetime.timedelta(hours=-6))
+        clock = lambda: datetime.datetime(2026, 9, 13, 11, tzinfo=mountain)
+        stamps = ['2026-09-13T11:00:00-06:00',   # NWS style, local noon-ish -> day
+                  '2026-09-13T21:00:00-06:00',   # NWS style, local evening -> night
+                  '2026-09-13T17:00:00+00:00',   # met.no style, 11:00 local -> day
+                  '2026-09-14T03:00:00Z',        # UTC, 21:00 local -> night
+                  '2026-09-13T22:00:00',         # naive: already local -> night
+                  '2026-09-13T12:30:00+05:30']   # half-hour zone, 01:00 local -> night
+        _, calls = publish([dict(temperature=60, condition='cloudy', datetime=s) for s in stamps],
+                           clock=clock)
+        hours = json.loads(calls[-1].args[2]['payload'])['h']
+        self.assertEqual([0, 1, 0, 1, 1, 1], [h[2] for h in hours[:6]])
 
     def test_forecast_metadata_keeps_hour_indices(self):
         _, calls = publish([dict(temperature=50, condition='sunny', datetime='2026-09-11T12:00:00Z')])

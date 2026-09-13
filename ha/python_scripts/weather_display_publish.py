@@ -150,32 +150,44 @@ PRECIP_TO_MM = {
     'in': 25.4,
 }
 
-# Local-time UTC offset in hours (negative west of UTC). Uses HA's now(), which
-# is timezone-aware in the configured local timezone, so DST is handled.
-# Edit FALLBACK_UTC_OFFSET to your zone; it is only used if now() fails.
+# Local-time UTC offset in hours (negative west of UTC). The python_script
+# sandbox exposes dt_util (timezone-aware, DST handled); now() is not defined
+# there. Edit FALLBACK_UTC_OFFSET to your zone; it is only used if both fail.
 FALLBACK_UTC_OFFSET = -6
 
 def local_utc_offset_hours():
-    try:
-        local_dt = now()
-        offset_td = local_dt.utcoffset()
-        if offset_td is not None:
-            hours = offset_td.total_seconds() / 3600
-            return int(hours)
-    except Exception as e:
-        logger.warning("local_utc_offset_hours: failed to extract offset from now(): " + str(e))
+    for label, clock in (('dt_util.now', lambda: dt_util.now()), ('now', lambda: now())):
+        try:
+            offset_td = clock().utcoffset()
+            if offset_td is not None:
+                return int(round(offset_td.total_seconds() / 3600))
+        except Exception as e:
+            logger.debug("local_utc_offset_hours: " + label + " unavailable: " + str(e))
 
     logger.warning("local_utc_offset_hours: using hardcoded fallback " + str(FALLBACK_UTC_OFFSET))
     return FALLBACK_UTC_OFFSET
 
 def is_night_hour(forecast_dt_str, offset_hours):
-    # forecast_dt_str looks like '2026-06-09T03:00:00+00:00' (UTC).
-    # Take the hour substring (chars 11..13), apply the offset, wrap to 0..23.
+    # Integrations differ: met.no emits UTC ('2026-06-09T03:00:00+00:00'), NWS
+    # emits local time with its own offset ('2026-09-13T11:00:00-06:00'). Read
+    # the string's offset, normalize to UTC, then apply the local offset. A
+    # string without any offset is taken as already local.
     try:
-        h_utc = int(forecast_dt_str[11:13])
+        s = forecast_dt_str
+        h = int(s[11:13])
+        i = max(s.rfind('+'), s.rfind('-'))
+        if i > 18:
+            sign = 1 if s[i] == '+' else -1
+            off = int(s[i + 1:i + 3])
+            if len(s) >= i + 6 and int(s[i + 4:i + 6]) >= 30:
+                off += 1
+            h_local = (h - sign * off + offset_hours) % 24
+        elif s.endswith('Z') or s.endswith('z'):
+            h_local = (h + offset_hours) % 24
+        else:
+            h_local = h % 24
     except Exception:
         return 0
-    h_local = (h_utc + offset_hours) % 24
     # Night band: 20:00 -- 06:59 local. Conservative -- this is meant to make
     # cloudy/partlycloudy nights read as "night", not a precise civil-twilight
     # boundary. Most integrations already emit clear-night for clear hours.
