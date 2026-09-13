@@ -2,6 +2,9 @@
 
 ESP32 + WS2812B (48 LEDs) wall-art weather station, fed by Home Assistant.
 
+<!-- Hero: photo of the strip on the wall goes here (docs/img/hero.jpg), then the timelapse GIF. -->
+![Rendered preview of the two LED rows](docs/img/wall-preview.png)
+
 Each LED is one hour of the next 24. The top row is temperature, the bottom
 row is sky conditions. "Now" is at the left end of each row; tomorrow at this
 time is at the right. Storm hours flash yellow, windy hours shimmer, and the
@@ -27,20 +30,6 @@ script, then run **Weather Display - Publish Forecast**. Both updates are needed
 for smooth temperature colors. Physical LED appearance still needs an on-device
 check; these defaults use the same RGB values as the app.
 
-## What you need
-
-- Home Assistant with the **Mosquitto broker** add-on (or any MQTT broker HA
-  is connected to)
-- A weather entity that supports hourly forecasts. The built-in met.no entity
-  (`weather.forecast_home`) works out of the box. Add an NWS entity too and the
-  card's **Forecast source** picker switches the wall between them; the switch
-  republishes immediately.
-- An ESP32 dev board (`esp32dev` in `platformio.ini`; change `board` for other
-  modules)
-- A 48-LED WS2812B / SK6812 strip, mounted as two rows of 24 (see Layout)
-- 5V supply for the strip, GND common with the ESP32
-- [PlatformIO](https://platformio.org/) to build and flash
-
 ## What this assumes
 
 Everything here runs on a stock Home Assistant OS install, but some choices are
@@ -62,11 +51,60 @@ baked in. Know them before you build:
   (the Mosquitto add-on is the easy path) and the `python_script:` integration.
 - **The installer wants SSH.** `scripts/install-ha.py` edits dashboard storage,
   so it needs the SSH add-on and stops HA core for about 30 seconds. Without
-  SSH, everything it does can be pasted by hand (see step 4).
+  SSH, everything it does can be pasted by hand (see step 6).
 
-## Setup
+## Build one
 
-### 1. Home Assistant
+Order of operations for a first build: parts, wire, mount, then the software
+side. Software steps assume Home Assistant OS with the Mosquitto add-on.
+
+### Parts (about $40 before the mount)
+
+| Part | Notes | Approx. |
+|------|-------|---------|
+| ESP32 dev board | `esp32dev` in `platformio.ini`; change `board` for other modules | $8 |
+| WS2812B strip, 60 LEDs/m, 1 m | Cut to 48. SK6812 works too (`LED_TYPE`) | $12 |
+| 5V supply, 3A | Barrel jack or USB-C PD trigger; shares GND with the ESP32 | $10 |
+| Wire, connectors, 330-470 ohm resistor, 1000 uF cap | Resistor in series on data, cap across 5V at the strip. Both optional at 48 LEDs, both cheap insurance | $5 |
+| Mount | Aluminum LED channel with a frosted diffuser reads best. Two 60 cm lengths, or a routed board | varies |
+
+Software: Home Assistant with the Mosquitto broker add-on (or any MQTT broker
+HA is connected to), a weather entity with hourly forecasts (met.no is built
+in; NWS if you are in the US), and [PlatformIO](https://platformio.org/) to
+build and flash. Node is only needed for the dashboard tab.
+
+### 1. Wire it
+
+![Wiring and LED layout](docs/img/wiring-layout.svg)
+
+- ESP32 `GPIO 18` to the strip's `DIN` (`DATA_PIN` in `src/main.cpp`).
+- Supply `5V` to the strip's `5V` and to the ESP32's `5V`/`VIN`; supply `GND`
+  to both. One common ground, always.
+- Do not power the strip from the ESP32's 3.3V rail. If you would rather run
+  the ESP32 from USB, leave `VIN` disconnected and share only `GND` and `DIN`;
+  never feed `VIN` and USB at the same time.
+- Full white on 48 LEDs is about 2.9A. The forecast never renders white, so a
+  3A supply has headroom; typical draw is under 1A.
+
+### 2. Mount it
+
+Cut the strip after LED 23 and rejoin with three short jumpers so the two
+halves sit as parallel rows, or fold the strip at the right edge if your
+channel allows it. Either way the data path is a snake:
+
+```
+Bottom row (LEDs  0..23): physically L -> R. Hour h at LED h.
+Top row    (LEDs 24..47): physically R -> L. Hour h at LED (47 - h).
+```
+
+LED 0 is bottom-left, LED 47 is top-left. Hour 0 is the current hour at the
+left end of both rows; +23h is at the right. By default the top row shows
+temperature and the bottom row conditions; swap them from the dashboard tab.
+If you mount the snake the other way up, flip `tempLed`/`precipLed` in
+`src/main.cpp` and the `47-h` mapping in `include/display_engine.h` and
+`web/display-model.js`.
+
+### 3. Home Assistant
 
 Everything HA needs is in `ha/`:
 
@@ -82,7 +120,7 @@ from Settings > Automations & Scenes > Scripts. You should see a retained
 message on the `weather/hourly` topic (MQTT add-on > Configure > Listen to a
 topic).
 
-### 2. Firmware
+### 4. Firmware
 
 ```bash
 cp include/secrets.h.example include/secrets.h   # WiFi + MQTT credentials
@@ -100,13 +138,15 @@ Set the device IP in `platformio_local.ini` (gitignored, see the comment in
 dual-bank, so a failed flash leaves the previous firmware intact, and the
 firmware blanks the LEDs during an OTA so FastLED isn't fighting the flash.
 
-### 3. First boot
+### 5. First boot
 
 The strip shows a slow blue breath on LED 0 until the first MQTT message
 arrives. Once the retained payload lands (a second or two after connecting)
 the full forecast appears.
 
-### 4. Dashboard tab (optional)
+### 6. Dashboard tab (optional)
+
+![The Edgelight dashboard tab](docs/img/dashboard-card.png)
 
 A Lovelace card mirrors the wall and edits its settings: edge assignments,
 temperature stops, condition colors, the three animations, day/night
@@ -131,21 +171,11 @@ By hand instead: copy `dist/` to `/config/www/edgelight/`, add
 with one `custom:edgelight-display-card` card, and include
 `ha/display-editor.yaml` as a package.
 
-## Layout
-
-The strip is snaked into two rows of 24:
-
-```
-Top row    (LEDs  0..23): physically L -> R  = temperature, hour h at LED h
-Bottom row (LEDs 24..47): physically R -> L  = conditions,  hour h at LED (47 - h)
-```
-
-Hour 0 is the current hour; hour 23 is 23 hours out. Data is on GPIO 18
-(`DATA_PIN` in `src/main.cpp`).
-
 ## MQTT topics
 
 ### `weather/hourly` (retained, published by HA)
+
+![Payload fields](docs/img/payload.svg)
 
 ```json
 {"h": [[temp_bucket, cond_code, is_night, precip_bucket, wind_bucket, temperature_f], ... 24 entries]}

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="300" viewBox="0 0 900 300" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="13">
+<rect width="900" height="300" rx="18" fill="#1c1f1e"/>
+<text x="30" y="36" fill="#e8eae9" font-size="18" font-weight="600">One retained MQTT message, published by Home Assistant</text>
+<text x="30" y="60" fill="#9aa3a1" font-family="ui-monospace,Menlo,monospace" font-size="13">weather/hourly</text>
+<text x="30" y="84" fill="#e8eae9" font-family="ui-monospace,Menlo,monospace" font-size="13">{"h": [ <tspan fill="#f0974a">[5, 8, 0, 3, 2, 73.0]</tspan>, ... 24 entries ], "times": [...], "generated_at": "...", "source": "met.no"}</text>
+<rect x="60" y="120" width="110" height="44" rx="8" fill="#2a2f2d" stroke="#3d4442"/>
+<text x="115" y="148" fill="#f0974a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="18">5</text>
+<path d="M115,164 V186" stroke="#43c47e" stroke-width="2"/>
+<text x="115" y="206" fill="#e8eae9" text-anchor="middle" font-size="13" font-weight="600">temp bucket</text>
+<text x="115" y="224" fill="#9aa3a1" text-anchor="middle" font-size="11">legacy 0-7; older</text>
+<text x="115" y="239" fill="#9aa3a1" text-anchor="middle" font-size="11">firmware only</text>
+<rect x="195" y="120" width="110" height="44" rx="8" fill="#2a2f2d" stroke="#3d4442"/>
+<text x="250" y="148" fill="#f0974a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="18">8</text>
+<path d="M250,164 V186" stroke="#43c47e" stroke-width="2"/>
+<text x="250" y="206" fill="#e8eae9" text-anchor="middle" font-size="13" font-weight="600">condition code</text>
+<text x="250" y="224" fill="#9aa3a1" text-anchor="middle" font-size="11">0-13, see COND_MAP</text>
+<text x="250" y="239" fill="#9aa3a1" text-anchor="middle" font-size="11"></text>
+<rect x="330" y="120" width="110" height="44" rx="8" fill="#2a2f2d" stroke="#3d4442"/>
+<text x="385" y="148" fill="#f0974a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="18">0</text>
+<path d="M385,164 V186" stroke="#43c47e" stroke-width="2"/>
+<text x="385" y="206" fill="#e8eae9" text-anchor="middle" font-size="13" font-weight="600">night flag</text>
+<text x="385" y="224" fill="#9aa3a1" text-anchor="middle" font-size="11">1 between 20:00</text>
+<text x="385" y="239" fill="#9aa3a1" text-anchor="middle" font-size="11">and 06:59</text>
+<rect x="465" y="120" width="110" height="44" rx="8" fill="#2a2f2d" stroke="#3d4442"/>
+<text x="520" y="148" fill="#f0974a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="18">3</text>
+<path d="M520,164 V186" stroke="#43c47e" stroke-width="2"/>
+<text x="520" y="206" fill="#e8eae9" text-anchor="middle" font-size="13" font-weight="600">precip bucket</text>
+<text x="520" y="224" fill="#9aa3a1" text-anchor="middle" font-size="11">0-10, from probability</text>
+<text x="520" y="239" fill="#9aa3a1" text-anchor="middle" font-size="11">or amount</text>
+<rect x="600" y="120" width="110" height="44" rx="8" fill="#2a2f2d" stroke="#3d4442"/>
+<text x="655" y="148" fill="#f0974a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="18">2</text>
+<path d="M655,164 V186" stroke="#43c47e" stroke-width="2"/>
+<text x="655" y="206" fill="#e8eae9" text-anchor="middle" font-size="13" font-weight="600">wind bucket</text>
+<text x="655" y="224" fill="#9aa3a1" text-anchor="middle" font-size="11">0-8, from mph</text>
+<text x="655" y="239" fill="#9aa3a1" text-anchor="middle" font-size="11"></text>
+<rect x="735" y="120" width="110" height="44" rx="8" fill="#2a2f2d" stroke="#3d4442"/>
+<text x="790" y="148" fill="#f0974a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="18">73.0</text>
+<path d="M790,164 V186" stroke="#43c47e" stroke-width="2"/>
+<text x="790" y="206" fill="#e8eae9" text-anchor="middle" font-size="13" font-weight="600">temperature °F</text>
+<text x="790" y="224" fill="#9aa3a1" text-anchor="middle" font-size="11">drives the continuous</text>
+<text x="790" y="239" fill="#9aa3a1" text-anchor="middle" font-size="11">color ramp</text>
+<text x="30" y="280" fill="#9aa3a1" font-size="12">HA never sends colors. The ESP32 owns the palette, so the strip comes back with the current forecast after any reboot.</text>
+</svg>
