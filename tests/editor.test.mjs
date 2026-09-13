@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaults, render, validate, sample } from '../web/display-model.js';
+import { defaults, render, validate, sample, ledFor, origins, normalize } from '../web/display-model.js';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,6 +36,12 @@ test('browser and real firmware renderer agree for edits, effects and legacy dat
       for(const time of [100,1500,15800,20000])requests.push({config:structuredClone(c),forecast:f,time});
       requests.push({config:c,forecast:{h:f.h.map(h=>h.slice(0,5))},time:0});
     }
+    // Every wiring layout, with wind shimmer on (its noise is keyed by physical LED).
+    for(const origin of origins)for(const serpentine of [true,false]){
+      const c=defaults();c.layout={origin,serpentine};c.top='conditions';c.animations.wind.target='both';
+      requests.push({config:c,forecast:sample(),time:1500});
+    }
+    const legacy=defaults();delete legacy.layout;requests.push({config:legacy,forecast:sample(),time:0});
     const output=execFileSync(binary,[],{input:requests.map(r=>JSON.stringify(r)).join('\n')+'\n',encoding:'utf8'}).trim().split('\n').map(JSON.parse);
     output.forEach((result,i)=>{
       assert.equal(result.error,'');
@@ -43,6 +49,23 @@ test('browser and real firmware renderer agree for edits, effects and legacy dat
       result.frame.forEach((color,led)=>{for(const shift of [0,8,16])assert.ok(Math.abs((color>>shift&255)-(expected[led]>>shift&255))<=1,`fixture ${i} LED ${led} channel ${shift}`);});
     });
   } finally { rmSync(folder,{recursive:true,force:true}); }
+});
+
+test('ledFor covers all eight wirings; configs without a layout mean the original wall', () => {
+  const at=(origin,serpentine,row,hour)=>ledFor({layout:{origin,serpentine}},row,hour);
+  assert.deepEqual([at('bottom-left',true,0,0),at('bottom-left',true,0,23),at('bottom-left',true,1,0),at('bottom-left',true,1,23)],[47,24,0,23]);
+  assert.deepEqual([at('top-left',true,0,0),at('top-left',true,1,0)],[0,47]);
+  assert.deepEqual([at('top-right',true,0,0),at('top-right',true,1,0)],[23,24]);
+  assert.deepEqual([at('bottom-right',false,1,0),at('bottom-right',false,0,0)],[23,47]);
+  for(const origin of origins)for(const serpentine of [true,false]){
+    const leds=[0,1].flatMap(row=>Array.from({length:24},(_,h)=>at(origin,serpentine,row,h))).sort((a,b)=>a-b);
+    assert.deepEqual(leds,Array.from({length:48},(_,i)=>i),`${origin} ${serpentine} is a permutation`);
+  }
+  const legacy=defaults();delete legacy.layout;
+  assert.equal(validate(legacy),'');
+  assert.equal(ledFor(legacy,0,0),47);
+  assert.deepEqual(normalize(legacy).layout,{origin:'bottom-left',serpentine:true});
+  assert.equal(validate({...defaults(),layout:{origin:'sideways',serpentine:true}}),'Invalid strip layout');
 });
 
 test('preview glow keeps hue and expresses dimming as intensity, never as black', async () => {

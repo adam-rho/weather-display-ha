@@ -36,8 +36,9 @@ Everything here runs on a stock Home Assistant OS install, but some choices are
 baked in. Know them before you build:
 
 - **48 LEDs in two rows of 24.** Firmware, dashboard card and preview all
-  assume this shape. A different count means edits in `src/main.cpp`,
-  `include/display_engine.h` and `web/display-model.js`.
+  assume this shape. Which corner LED 0 sits in, and whether the strip snakes,
+  is a setting in the dashboard tab. A different LED count means edits in
+  `src/main.cpp`, `include/display_engine.h` and `web/display-model.js`.
 - **Hourly forecasts over `weather.get_forecasts`.** met.no (built in) and NWS
   are tested. Other integrations work if their condition strings are in
   `COND_MAP`; unknown strings render off. Units and timestamp offsets are
@@ -97,12 +98,15 @@ Bottom row (LEDs  0..23): physically L -> R. Hour h at LED h.
 Top row    (LEDs 24..47): physically R -> L. Hour h at LED (47 - h).
 ```
 
-LED 0 is bottom-left, LED 47 is top-left. Hour 0 is the current hour at the
-left end of both rows; +23h is at the right. By default the top row shows
-temperature and the bottom row conditions; swap them from the dashboard tab.
-If you mount the snake the other way up, flip `tempLed`/`precipLed` in
-`src/main.cpp` and the `47-h` mapping in `include/display_engine.h` and
-`web/display-model.js`.
+That is the default: LED 0 bottom-left, LED 47 top-left. Hour 0 is the
+current hour at the left end of both rows; +23h is at the right. By default
+the top row shows temperature and the bottom row conditions.
+
+Wired yours differently? Nothing to recompile. In the dashboard tab, under
+**Edges > Strip wiring**, pick the corner where LED 0 sits and whether the
+strip snakes back on the second row, then turn on the LED guide and check the
+numbers against your strip. The layout is stored on the device with the rest
+of the settings (`layout: {origin, serpentine}`).
 
 ### 3. Home Assistant
 

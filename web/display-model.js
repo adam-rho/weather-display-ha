@@ -12,8 +12,20 @@ const blend=(c,t,f)=>pack(channels(c).map((v,i)=>v+(channels(t)[i]-v)*f));
 // so dimming (animations, off) shows as a fainter glow instead of black on the wall.
 export const glow=c=>{const ch=channels(c),m=Math.max(...ch);return m?{color:pack(ch.map(v=>v*255/m)),intensity:m/255}:{color:0,intensity:0};};
 export const conditionBucket=c=>[0,1,1,2,3,1,3,4,5,6,7,5,0,7][c]||0;
+// Strip layout: which corner holds LED 0 and whether the strip snakes back on the second
+// row. Configs saved before layouts existed mean the original wall (bottom-left, snaked).
+export const origins=['bottom-left','bottom-right','top-left','top-right'];
+export const layoutOf=c=>({origin:'bottom-left',serpentine:true,...(c?.layout||{})});
+export const normalize=c=>({...c,layout:layoutOf(c)});
+// Physical LED for (row, hour). row 0 = top, 1 = bottom; hour 0 is the left end of both rows.
+// Keep in sync with Display::ledFor in include/display_engine.h.
+export function ledFor(config,row,hour){
+  const l=layoutOf(config),originTop=l.origin.startsWith('top'),originLeft=l.origin.endsWith('left');
+  const index=row===(originTop?0:1)?0:1, ltr=index===0?originLeft:(l.serpentine?!originLeft:originLeft);
+  return index*24+(ltr?hour:23-hour);
+}
 export function defaults() {
-  return {version:1,top:'temperature',bottom:'conditions',
+  return {version:1,top:'temperature',bottom:'conditions',layout:{origin:'bottom-left',serpentine:true},
     temperature:stops.map((value,i)=>({value,color:colors[i]})),
     conditions:['#FFD34E','#C3B47A','#8795A6','#F2F4F5','#43C47E','#9BE0E8','#A66BFF'],
     wet:true,dayBrightness:100,nightBrightness:100*128/255,
@@ -26,6 +38,7 @@ export function validate(c) {
   const color=v=>typeof v==='string'&&/^#[0-9a-f]{6}$/i.test(v);
   if(c?.version!==1) return 'Unsupported settings version';
   if(!['temperature','conditions','off'].includes(c.top)||!['temperature','conditions','off'].includes(c.bottom)) return 'Invalid edge assignment';
+  if(c.layout!==undefined&&(typeof c.layout!=='object'||c.layout===null||!origins.includes(c.layout.origin)||typeof c.layout.serpentine!=='boolean')) return 'Invalid strip layout';
   if(!Array.isArray(c.temperature)||c.temperature.length<2||c.temperature.length>16) return 'Use 2 to 16 temperature stops';
   if(c.temperature.some((s,i)=>!number(s.value,-60,140)||!color(s.color)||(i&&s.value<=c.temperature[i-1].value))) return 'Temperature stops must have ordered values and valid colors';
   if(!Array.isArray(c.conditions)||c.conditions.length!==7||!c.conditions.every(color)) return 'Seven valid condition colors are required';
@@ -117,7 +130,7 @@ function animate(color,config,hours,h,led,channel,time) {
 export function render(config,forecast,time=0) {
   const frame=Array(48).fill(0), hours=forecast?.h||[];
   for(const [row,channel] of [config.top,config.bottom].entries())for(let h=0;h<Math.min(24,hours.length);h++){
-    const e=hours[h],led=row===0?47-h:h;let color=0;
+    const e=hours[h],led=ledFor(config,row,h);let color=0;
     if(channel==='temperature')color=temperature(config.temperature,e.length>=6?e[5]:stops[e[0]-1]);
     if(channel==='conditions'){
       const bucket=conditionBucket(e[1]);

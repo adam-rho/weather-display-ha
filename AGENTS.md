@@ -24,5 +24,5 @@
 
 ## Conventions
 
-- Hardware shape is fixed at 48 LEDs in two rows of 24 (firmware, card, and preview all assume it).
+- Hardware shape is fixed at 48 LEDs in two rows of 24 (firmware, card, and preview all assume it). The wiring corner and snake direction are device config (`layout`), mapped by `ledFor` in `display_engine.h` and `display-model.js`; both must agree, and the parity test checks all eight.
 - Commit directly to `main`; feature branches only for gated multi-commit work.

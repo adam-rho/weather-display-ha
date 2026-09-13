@@ -48,6 +48,7 @@ inline bool equal(JsonVariantConst a, JsonVariantConst b) {
 inline JsonDocument defaults() {
     JsonDocument d;
     d["version"] = 1; d["top"] = "temperature"; d["bottom"] = "conditions";
+    d["layout"]["origin"] = "bottom-left"; d["layout"]["serpentine"] = true;
     for (int i = 0; i < 7; ++i) {
         auto stop = d["temperature"].add<JsonObject>();
         stop["value"] = WeatherColors::TEMP_STOPS[i];
@@ -68,6 +69,13 @@ inline JsonDocument defaults() {
 inline std::string validate(JsonVariantConst c) {
     if (c["version"] != 1) return "Unsupported settings version";
     if (!channel(c["top"]) || !channel(c["bottom"])) return "Invalid edge assignment";
+    if (!c["layout"].isNull()) {
+        // Optional: configs saved before layouts existed mean the original wall.
+        bool origin = false;
+        for (const char* o : {"bottom-left", "bottom-right", "top-left", "top-right"})
+            if (c["layout"]["origin"] == o) origin = true;
+        if (!origin || !c["layout"]["serpentine"].is<bool>()) return "Invalid strip layout";
+    }
     auto stops = c["temperature"].as<JsonArrayConst>();
     if (stops.size() < 2 || stops.size() > 16) return "Use 2 to 16 temperature stops";
     double previous = -61;
@@ -94,6 +102,19 @@ inline std::string validate(JsonVariantConst c) {
     if (!threshold) return "Invalid wind threshold";
     if (!validColor(c["animations"]["lightning"]["color"])) return "Invalid lightning color";
     return "";
+}
+// Physical LED for (row, hour). row 0 is the top row, 1 the bottom; hour 0 is
+// the left end of both rows. The layout says which corner holds LED 0 and
+// whether the strip snakes back on the second row. Keep in sync with ledFor in
+// web/display-model.js.
+inline int ledFor(JsonVariantConst config, int row, int hour) {
+    const char* origin = config["layout"]["origin"] | "bottom-left";
+    bool serpentine = config["layout"]["serpentine"] | true;
+    bool originTop = strncmp(origin, "top", 3) == 0;
+    bool originLeft = strstr(origin, "left") != nullptr;
+    int index = row == (originTop ? 0 : 1) ? 0 : 1;   // 0 = the row that holds LED 0
+    bool ltr = index == 0 ? originLeft : (serpentine ? !originLeft : originLeft);
+    return index*24 + (ltr ? hour : 23-hour);
 }
 inline uint32_t scale(uint32_t c, double amount) {
     uint32_t result = 0;
@@ -216,7 +237,7 @@ inline Frame render(JsonVariantConst config, JsonVariantConst forecast, double e
                         color = wetColor(color, precip);
                 }
             }
-            int led = row == 0 ? 47-h : h;
+            int led = ledFor(config, row, h);
             color = animate(color, config, hours, h, led, assignment, elapsed);
             frame[led] = scale(color,
                 config[hours[0][2] == 1 ? "nightBrightness" : "dayBrightness"].as<double>()/100);

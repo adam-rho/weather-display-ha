@@ -14,6 +14,21 @@ int main() {
     auto frame = device.render(forecast, 0);
     assert(frame[47] == 0x0000FF && frame[24] == 0xCF0000);
     assert(frame[0] == 0x43C47E && frame[23] == 0xFFD34E);
+
+    // Strip layout: LED 0 in the top-right corner, snaked. Top row reads 23..0, bottom 24..47.
+    JsonDocument cfg; cfg.set(device.state()["config"]);
+    cfg["layout"]["origin"] = "top-right"; cfg["layout"]["serpentine"] = true;
+    assert(Display::validate(cfg).empty());
+    assert(Display::ledFor(cfg, 0, 0) == 23 && Display::ledFor(cfg, 0, 23) == 0);
+    assert(Display::ledFor(cfg, 1, 0) == 24 && Display::ledFor(cfg, 1, 23) == 47);
+    cfg["layout"]["serpentine"] = false;            // parallel rows: both run right to left
+    assert(Display::ledFor(cfg, 1, 0) == 47 && Display::ledFor(cfg, 1, 23) == 24);
+    assert(Display::render(cfg, forecast, 0)[23] == 0x0000FF);
+    cfg["layout"]["origin"] = "sideways";
+    assert(Display::validate(cfg) == "Invalid strip layout");
+    cfg.remove("layout");                            // pre-layout configs mean the original wall
+    assert(Display::validate(cfg).empty() && Display::ledFor(cfg, 0, 0) == 47 && Display::ledFor(cfg, 1, 0) == 0);
+
     JsonDocument command;
     command["id"] = "first";
     command["expectedRevision"] = 0;

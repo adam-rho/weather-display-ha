@@ -136,5 +136,5 @@
 <text x="520" y="354" fill="#9aa3a1" font-size="12">One common ground: ESP32 GND and supply GND both land on the strip.</text>
 <text x="520" y="372" fill="#9aa3a1" font-size="12">Optional but cheap insurance: 330-470 ohm in series on DIN, 1000 uF across 5V/GND at the strip.</text>
 <text x="520" y="390" fill="#9aa3a1" font-size="12">Full white on 48 LEDs is about 2.9 A. The forecast never renders white; typical draw is under 1 A.</text>
-<text x="520" y="408" fill="#9aa3a1" font-size="12">Row assignments are editable from the dashboard tab. Both rows read left to right in time.</text>
+<text x="520" y="408" fill="#9aa3a1" font-size="12">Wired LED 0 in a different corner, or without the snake? Set it in the dashboard tab (Edges > Strip wiring).</text>
 </svg>
