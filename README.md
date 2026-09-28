@@ -5,6 +5,9 @@ ESP32 + WS2812B (48 LEDs) wall-art weather station, fed by Home Assistant.
 <!-- Hero: photo of the strip on the wall goes here (docs/img/hero.jpg), then the timelapse GIF. -->
 ![Rendered preview of the two LED rows](docs/img/wall-preview.png)
 
+**[Watch 20 hours on the wall in a timelapse](https://youtu.be/lVj1W1odWpU)**: the forecast slides
+left as the day passes and the colors shift as it updates.
+
 Each LED is one hour of the next 24. The top row is temperature, the bottom
 row is sky conditions. "Now" is at the left end of each row; tomorrow at this
 time is at the right. Storm hours flash yellow, windy hours shimmer, and the
